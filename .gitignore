@@ -1,0 +1,85 @@
+# Secrets and local env
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.csr
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+
+# Python runtime/dependencies/cache
+**/.venv/
+**/venv/
+**/.py312deps/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.coverage
+
+# Node/frontend dependencies/build cache
+**/node_modules/
+**/.vite/
+**/.cache/
+**/dist/.vite/
+
+# Logs, PID, runtime data
+server_logs/
+**/logs/
+*.log
+*.log.*
+*.pid
+*.pid.*
+server_inventory.md
+
+# Database and runtime volumes
+sds/runtime/
+**/runtime/
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+sds/ca-server/agent_ca.db
+sds/challenge-server/challenges/
+sds/testwork/
+sds/registry-server/tmp_upload/
+
+# Uploads/generated task runs/reports
+th/mode_router/platform_task_runs/
+th/mode_router/reports/
+th/mode_router/literature_runs/
+yhl/runs/
+travel_runs/
+
+# Backups/archive/temp
+_archive/
+**/backups/
+*_backups/
+*.bak
+*.bak.*
+*.tgz
+*.tar
+*.tar.gz
+*.zip
+*.7z
+*.rar
+
+# Tool/editor/system files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Nested git metadata archived before root repo init; do not commit nested repo internals
+**/.git/

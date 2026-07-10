@@ -1,0 +1,278 @@
+\
+import json
+import sys
+import tempfile
+import threading
+import types
+import unittest
+from pathlib import Path
+from urllib.request import Request, urlopen
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import service
+from service import create_server
+
+
+class ServiceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = create_server("127.0.0.1", 0)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+
+    def _get_json(self, path: str) -> dict:
+        with urlopen(f"http://127.0.0.1:{self.port}{path}") as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _post_json(self, path: str, payload: dict) -> dict:
+        request = Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urlopen(request) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def test_health_endpoint(self):
+        response = self._get_json("/health")
+        self.assertEqual(response["status"], "ok")
+
+    def test_workflow_latest_exposes_progress_and_role_status(self):
+        old_runs_dir = service.RUNS_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                runs_dir = Path(tmpdir)
+                run_dir = runs_dir / "20260603_demo"
+                run_dir.mkdir()
+                service.RUNS_DIR = runs_dir
+                (run_dir / "01_user_request.json").write_text(json.dumps({"task": "demo task"}), encoding="utf-8")
+                (run_dir / "06_mode_decision.json").write_text(json.dumps({"mode": "mode_2", "summary": "parallel"}), encoding="utf-8")
+                (run_dir / "07_orchestrator_plan.json").write_text(
+                    json.dumps({"strategy": "tree_root_parallel_children", "work_packages": [{"id": "search"}]}),
+                    encoding="utf-8",
+                )
+                (run_dir / "08_role_agents.json").write_text(
+                    json.dumps({"search": {"name": "search agent"}}),
+                    encoding="utf-8",
+                )
+                (run_dir / "08e_workflow_checklist.json").write_text(
+                    json.dumps(
+                        {
+                            "steps": [
+                                {"stage": "user_input", "status": "done", "description": "received", "artifact": "01_user_request.json"},
+                                {"stage": "agent_search", "status": "done", "description": "search done", "artifact": "step1_search_result.json"},
+                            ]
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (run_dir / "09_full_data_flow.json").write_text(
+                    json.dumps(
+                        {
+                            "final_result": "hello",
+                            "orchestration_tree": {"children": [{"role": "search", "agent_name": "search agent"}]},
+                            "steps": [
+                                {
+                                    "role": "search",
+                                    "agent": {"name": "search agent"},
+                                    "task_id": "task-search",
+                                    "final_state": "awaiting-completion",
+                                    "output_length": 5,
+                                    "depends_on_roles": [],
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (run_dir / "12_state_events.jsonl").write_text(
+                    "\n".join(
+                        [
+                            json.dumps({"timestamp": "t1", "stage": "workflow_start", "state": "running", "message": "start"}),
+                            json.dumps({"timestamp": "t2", "stage": "agent_dispatch", "state": "waiting_summary", "role": "search", "agent_name": "search agent", "message": "ready"}),
+                            json.dumps({"timestamp": "t3", "stage": "workflow_complete", "state": "done", "message": "done"}),
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
+                response = self._get_json("/workflow/latest")
+        finally:
+            service.RUNS_DIR = old_runs_dir
+
+        self.assertEqual(response["status"], "done")
+        self.assertEqual(response["progress"]["percent"], 100)
+        self.assertEqual(response["role_progress"][0]["role"], "search")
+        self.assertEqual(response["stage_progress"][1]["stage"], "agent_search")
+        self.assertEqual(response["final_length"], 5)
+
+    def test_mode_decide_endpoint_has_zh(self):
+        response = self._post_json(
+            "/mode/decide",
+            {
+                "task": "build a sales report",
+                "skills": [
+                    {"aic": "agent-data", "agent_name": "Data Agent", "skillid": "query", "score": 0.95},
+                    {"aic": "agent-data", "agent_name": "Data Agent", "skillid": "chart", "score": 0.91}
+                ],
+                "hints": {"estimated_skill_count": 2}
+            }
+        )
+        self.assertEqual(response["decision"]["mode"], "mode_1")
+        self.assertIn("zh", response)
+        self.assertIn("decision", response["zh"])
+
+    def test_mode_classify_endpoint_returns_three_way_route(self):
+        response = self._post_json(
+            "/mode/classify",
+            {
+                "task": "设计一个系统架构，需要后端、前端、运维和安全审查分工协作。",
+                "save_report": False,
+            },
+        )
+        self.assertEqual(response["route_classification"]["label"], "多Agent")
+        self.assertEqual(response["decision"]["mode"], "mode_2")
+
+    def test_orchestrator_plan_from_discovery_response(self):
+        response = self._post_json(
+            "/orchestrator/plan",
+            {
+                "task": "prepare an expansion plan",
+                "hints": {"estimated_skill_count": 2, "requires_independent_roles": True},
+                "discovery_response": {
+                    "result": {
+                        "acsMap": {
+                            "agent-market": {"name": "Market Agent"},
+                            "agent-legal": {"name": "Legal Agent"}
+                        },
+                        "agents": [
+                            {
+                                "group": "default",
+                                "agentSkills": [
+                                    {"aic": "agent-market", "skillId": "market-entry", "ranking": 1, "memo": "enhanced_score=0.92"},
+                                    {"aic": "agent-legal", "skillId": "compliance", "ranking": 2, "memo": "enhanced_score=0.91"}
+                                ]
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+        self.assertEqual(response["source"], "discovery_response")
+        self.assertEqual(response["decision"]["mode"], "mode_2")
+        self.assertEqual(response["plan"]["mode"], "mode_2")
+        self.assertIn("plan", response["zh"])
+
+    def test_orchestrator_execute_runs_group_chat_when_mode2(self):
+        class FakeTaskState:
+            AwaitingCompletion = "awaiting-completion"
+            Completed = "completed"
+            Failed = "failed"
+            Rejected = "rejected"
+            Canceled = "canceled"
+
+        class FakeACSObject:
+            def __init__(self, aic):
+                self.aic = aic
+
+        class FakeLeaderMqClient:
+            def __init__(self, session):
+                self.session = session
+
+            async def start_task(self, session_id, text_content, task_id, mentions):
+                self.session.started.append({"session_id": session_id, "task_id": task_id, "mentions": mentions, "prompt": text_content})
+                self.session.snapshots[(task_id, mentions[0])] = {
+                    "state": FakeTaskState.AwaitingCompletion,
+                    "product_text": f"result-for-{mentions[0]}",
+                }
+
+            async def complete_task(self, task_id, session_id, mentions):
+                self.session.completed.append({"task_id": task_id, "mentions": mentions})
+
+        class FakeGroupSession:
+            def __init__(self):
+                self.started = []
+                self.completed = []
+                self.snapshots = {}
+                self.leader_mq_client = FakeLeaderMqClient(self)
+
+            def get_partner_task_snapshot(self, task_id, aic):
+                return self.snapshots.get((task_id, aic))
+
+        class FakeGroupLeader:
+            last_session = None
+            invited = []
+
+            def __init__(self, leader_aic, rabbitmq_config):
+                self.leader_aic = leader_aic
+                self.rabbitmq_config = rabbitmq_config
+
+            async def create_group_session(self, session_id, initial_partners):
+                self.session = FakeGroupSession()
+                FakeGroupLeader.last_session = self.session
+                return self.session
+
+            async def invite_partner(self, session_id, partner_acs, partner_rpc_url):
+                FakeGroupLeader.invited.append((partner_acs.aic, partner_rpc_url))
+
+        fake_aip = types.ModuleType("acps_sdk.aip")
+        fake_aip.GroupLeader = FakeGroupLeader
+        fake_aip.ACSObject = FakeACSObject
+        fake_aip.TaskState = FakeTaskState
+        fake_sdk = types.ModuleType("acps_sdk")
+        fake_sdk.aip = fake_aip
+        old_modules = {name: sys.modules.get(name) for name in ("acps_sdk", "acps_sdk.aip")}
+        sys.modules["acps_sdk"] = fake_sdk
+        sys.modules["acps_sdk.aip"] = fake_aip
+        try:
+            response = self._post_json(
+                "/orchestrator/execute",
+                {
+                    "task": "设计一个需要市场和法务协作的方案",
+                    "save_report": False,
+                    "route_scores": {"LLM": 0.01, "Agent": 0.1, "多Agent": 0.95},
+                    "hints": {"estimated_skill_count": 2, "requires_independent_roles": True, "parallelizable": True},
+                    "skills": [
+                        {
+                            "aic": "agent-market",
+                            "agent_name": "Market Agent",
+                            "skillid": "market-entry",
+                            "score": 0.95,
+                            "acs": {"endPoints": [{"url": "http://127.0.0.1:8021/agents/market/rpc"}]},
+                        },
+                        {
+                            "aic": "agent-legal",
+                            "agent_name": "Legal Agent",
+                            "skillid": "compliance",
+                            "score": 0.94,
+                            "acs": {"endPoints": [{"url": "http://127.0.0.1:8022/agents/legal/rpc"}]},
+                        },
+                    ],
+                },
+            )
+        finally:
+            for name, module in old_modules.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
+        self.assertEqual(response["decision"]["mode"], "mode_2")
+        self.assertFalse(response["execution"]["dry_run"])
+        self.assertTrue(response["execution"]["group_chat"])
+        self.assertEqual(response["execution"]["status"], "done")
+        self.assertEqual(len(response["execution"]["runs"]), 2)
+        self.assertEqual(len(FakeGroupLeader.last_session.started), 2)
+        self.assertIn(("agent-market", "http://127.0.0.1:8021/group/rpc"), FakeGroupLeader.invited)
+
+
+if __name__ == "__main__":
+    unittest.main()

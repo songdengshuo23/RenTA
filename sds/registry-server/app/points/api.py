@@ -1,0 +1,109 @@
+from typing import List
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+
+from app.account.model import User
+from app.core.auth import get_current_user
+from app.core.db_session import get_db
+from app.core.service_auth import require_registry_service_token
+from app.points.schema import (
+    AgentCallSettleRequest,
+    AgentCallSettleResponse,
+    AmountRequest,
+    PointsSummaryResponse,
+    PointsTransactionListResponse,
+    PointsTransactionResponse,
+    PointsTrendItem,
+)
+from app.points.service import (
+    get_summary,
+    get_trend,
+    list_transactions,
+    record_topup,
+    record_withdraw,
+    settle_agent_call,
+)
+
+
+router = APIRouter(prefix="/points", tags=["points"])
+
+
+@router.get("/me/summary", response_model=PointsSummaryResponse)
+def read_my_points_summary(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return get_summary(db, current_user.id)
+
+
+@router.get("/me/transactions", response_model=PointsTransactionListResponse)
+def read_my_points_transactions(
+    page_num: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return list_transactions(db, current_user.id, page_num, page_size)
+
+
+@router.get("/me/trend", response_model=List[PointsTrendItem])
+def read_my_points_trend(
+    days: int = Query(30, ge=1, le=90),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return get_trend(db, current_user.id, days)
+
+
+@router.post("/me/topup", response_model=PointsTransactionResponse)
+def topup_my_points(
+    request: AmountRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    tx = record_topup(db, current_user.id, request.amount)
+    return {
+        "id": tx.id,
+        "type": tx.type,
+        "amount": float(tx.amount),
+        "balance_after": float(tx.balance_after),
+        "description": tx.description,
+        "memo": tx.memo,
+        "related_agent_aic": tx.related_agent_aic,
+        "related_agent_name": tx.related_agent_name,
+        "counterparty_user_id": tx.counterparty_user_id,
+        "reference_id": tx.reference_id,
+        "created_at": tx.created_at,
+    }
+
+
+@router.post("/me/withdraw", response_model=PointsTransactionResponse)
+def withdraw_my_points(
+    request: AmountRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    tx = record_withdraw(db, current_user.id, request.amount)
+    return {
+        "id": tx.id,
+        "type": tx.type,
+        "amount": float(tx.amount),
+        "balance_after": float(tx.balance_after),
+        "description": tx.description,
+        "memo": tx.memo,
+        "related_agent_aic": tx.related_agent_aic,
+        "related_agent_name": tx.related_agent_name,
+        "counterparty_user_id": tx.counterparty_user_id,
+        "reference_id": tx.reference_id,
+        "created_at": tx.created_at,
+    }
+
+
+@router.post("/internal/agent-call", response_model=AgentCallSettleResponse)
+def settle_agent_call_points(
+    request: AgentCallSettleRequest,
+    _auth: None = Depends(require_registry_service_token),
+    db: Session = Depends(get_db),
+):
+    return settle_agent_call(db, request)

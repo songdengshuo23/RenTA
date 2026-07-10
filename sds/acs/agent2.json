@@ -1,0 +1,48 @@
+{
+  "aic": "1.2.156.3088.0001.00001.TTLIHU.LW9WCA.1.0N2P",
+  "active": true,
+  "lastModifiedTime": "2026-04-20T23:00:00+08:00",
+  "protocolVersion": "02.00",
+  "name": "SDS Real Agent 2",
+  "description": "SDS real integration agent 2",
+  "version": "1.0.2",
+  "provider": {
+    "organization": "BUPT",
+    "department": "AI",
+    "url": "https://ai.bupt.edu.cn",
+    "license": "beijing-license"
+  },
+  "securitySchemes": {
+    "mtls": {
+      "type": "mutualTLS",
+      "description": "mTLS",
+      "x-caChallengeBaseUrl": "http://challenge-server:8004/acps-atr-v2"
+    }
+  },
+  "endPoints": [
+    {
+      "url": "http://10.126.126.4:8012/partners/sds_agent_2/rpc",
+      "transport": "JSONRPC",
+      "security": [
+        {
+          "mtls": []
+        }
+      ]
+    }
+  ],
+  "capabilities": {
+    "streaming": false,
+    "notification": false,
+    "messageQueue": [
+      "redis:>=7.0"
+    ]
+  },
+  "defaultInputModes": [
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "skills": []
+}

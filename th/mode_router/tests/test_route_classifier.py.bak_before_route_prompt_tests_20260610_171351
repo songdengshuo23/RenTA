@@ -1,0 +1,37 @@
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from route_classifier import ROUTE_AGENT, ROUTE_LLM, ROUTE_MULTI_AGENT, classify_task_route
+
+
+class RouteClassifierTests(unittest.TestCase):
+    def test_llm_route_for_direct_reasoning_task(self):
+        result = classify_task_route("解释一下什么是递归，并给一个简单例子。")
+        self.assertEqual(result.label, ROUTE_LLM)
+        self.assertEqual(result.mode, "mode_0")
+        self.assertFalse(result.llm_used)
+
+    def test_agent_route_for_tool_using_single_role_task(self):
+        result = classify_task_route("联网搜索最新的行业新闻并整理成摘要。")
+        self.assertEqual(result.label, ROUTE_AGENT)
+        self.assertEqual(result.mode, "mode_1")
+
+    def test_multi_agent_route_for_cross_role_task(self):
+        result = classify_task_route("设计一个系统架构，需要后端、前端、运维和安全审查分工协作。")
+        self.assertEqual(result.label, ROUTE_MULTI_AGENT)
+        self.assertEqual(result.mode, "mode_2")
+
+    def test_route_scores_override(self):
+        result = classify_task_route(
+            "任意任务",
+            payload={"route_scores": {"LLM": 0.1, "Agent": 0.2, "多Agent": 0.9}},
+        )
+        self.assertEqual(result.label, ROUTE_MULTI_AGENT)
+        self.assertEqual(result.model, "override")
+
+
+if __name__ == "__main__":
+    unittest.main()

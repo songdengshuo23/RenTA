@@ -1,0 +1,2 @@
+CREATE DATABASE registry_db OWNER sds;
+CREATE DATABASE ca_db OWNER sds;

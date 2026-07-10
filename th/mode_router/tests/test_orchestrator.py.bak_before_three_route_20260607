@@ -1,0 +1,76 @@
+\
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from mode_selector import MODE_1, MODE_2, decide_mode
+from orchestrator import build_execution_plan, execute_plan_dry_run, get_placeholder_connector_contract
+
+
+class OrchestratorTests(unittest.TestCase):
+    def test_build_mode1_plan(self):
+        skills = [
+            {"aic": "agent-data", "agent_name": "Data Agent", "skillid": "query", "score": 0.95},
+            {"aic": "agent-data", "agent_name": "Data Agent", "skillid": "chart", "score": 0.91}
+        ]
+        decision = decide_mode("build a report", skills, hints={"estimated_skill_count": 2})
+        plan = build_execution_plan("build a report", skills, decision=decision)
+        self.assertEqual(plan["mode"], MODE_1)
+        self.assertEqual(plan["primary_agent"]["name"], "Data Agent")
+        self.assertEqual(plan["strategy"], "single_agent_multi_skill")
+
+    def test_build_mode2_plan(self):
+        skills = [
+            {"aic": "market", "agent_name": "Market Agent", "skillid": "market", "score": 0.93},
+            {"aic": "legal", "agent_name": "Legal Agent", "skillid": "legal", "score": 0.92},
+            {"aic": "finance", "agent_name": "Finance Agent", "skillid": "finance", "score": 0.90}
+        ]
+        decision = decide_mode("design a go-to-market plan", skills, hints={"estimated_skill_count": 3, "requires_independent_roles": True, "parallelizable": True})
+        plan = build_execution_plan("design a go-to-market plan", skills, decision=decision)
+        self.assertEqual(plan["mode"], MODE_2)
+        self.assertEqual(plan["strategy"], "tree_root_parallel_children")
+        self.assertEqual(len(plan["work_packages"]), 3)
+        self.assertEqual(plan["coordinator"]["name"], "Market Agent")
+        self.assertEqual(plan["root_package"]["agent"]["name"], "Market Agent")
+        self.assertEqual(len(plan["orchestration_tree"]["children"]), 3)
+        for child in plan["orchestration_tree"]["children"]:
+            self.assertEqual(child["parent_node"], plan["root_package"]["package_id"])
+            self.assertEqual(child["input_from"], "root_agent")
+            self.assertEqual(child["output_to"], "root_agent")
+
+    def test_build_mode2_plan_sequential_children_have_dependency_chain(self):
+        skills = [
+            {"aic": "search", "agent_name": "Search Agent", "skillid": "search", "score": 0.95},
+            {"aic": "analysis", "agent_name": "Analysis Agent", "skillid": "analysis", "score": 0.92},
+            {"aic": "writing", "agent_name": "Writing Agent", "skillid": "writing", "score": 0.91}
+        ]
+        decision = decide_mode("write a literature review", skills, hints={"estimated_skill_count": 3, "requires_independent_roles": True, "parallelizable": False})
+        plan = build_execution_plan("write a literature review", skills, decision=decision)
+        self.assertEqual(plan["strategy"], "tree_root_sequential_children")
+        self.assertEqual(plan["work_packages"][0]["depends_on"], [])
+        self.assertEqual(len(plan["work_packages"][1]["depends_on"]), 1)
+        self.assertEqual(len(plan["work_packages"][2]["depends_on"]), 1)
+
+    def test_execute_plan_dry_run(self):
+        skills = [
+            {"aic": "market", "agent_name": "Market Agent", "skillid": "market", "score": 0.93},
+            {"aic": "legal", "agent_name": "Legal Agent", "skillid": "legal", "score": 0.92},
+            {"aic": "finance", "agent_name": "Finance Agent", "skillid": "finance", "score": 0.90}
+        ]
+        decision = decide_mode("design a go-to-market plan", skills, hints={"estimated_skill_count": 3, "requires_independent_roles": True})
+        plan = build_execution_plan("design a go-to-market plan", skills, decision=decision)
+        execution = execute_plan_dry_run(plan)
+        self.assertTrue(execution["dry_run"])
+        self.assertEqual(len(execution["runs"]), 3)
+
+    def test_connector_contract_has_required_endpoints(self):
+        contract = get_placeholder_connector_contract()
+        required_paths = {endpoint["path"] for endpoint in contract["required_endpoints"]}
+        self.assertIn("/tasks", required_paths)
+        self.assertIn("/tasks/{run_id}", required_paths)
+
+
+if __name__ == "__main__":
+    unittest.main()

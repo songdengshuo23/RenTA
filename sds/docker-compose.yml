@@ -1,0 +1,108 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: sds-postgres
+    environment:
+      POSTGRES_USER: sds
+      POSTGRES_PASSWORD: sds123
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./runtime/postgres:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sds -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  registry-server:
+    image: sds/registry-server:local
+    build:
+      context: ./registry-server
+    container_name: sds-registry
+    entrypoint: ["sh", "/opt/scripts/registry-start.sh"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://sds:sds123@postgres:5432/registry_db
+      SECRET_KEY: sds-registry-secret-key
+      UVICORN_HOST: 0.0.0.0
+      UVICORN_PORT: 8001
+      UVICORN_RELOAD: "false"
+      UPLOAD_BASE_PATH: /tmp/registry-uploads
+      CA_SERVER_BASE_URL: http://ca-server:8003/acps-atr-v2
+      CA_SERVER_MOCK: "false"
+      CA_SERVER_SERVICE_TOKEN: ${SDS_INTERNAL_SERVICE_TOKEN:-local-dev-token}
+      ATR_BASE_PATH: /acps-atr-v2
+      ATR_ALLOW_IP_LIST: 127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      REGISTRY_SERVICE_TOKEN: ${SDS_INTERNAL_SERVICE_TOKEN:-local-dev-token}
+      DSP_BASE_PATH: /acps-dsp-v2
+      DSP_SERVICE_TOKEN: ${SDS_DSP_SERVICE_TOKEN:-local-dsp-token}
+      CA_CHALLENGE_STATUS_PATH_TYPE: parent
+    volumes:
+      - ./runtime/registry-uploads:/tmp/registry-uploads
+      - ./scripts:/opt/scripts:ro
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  challenge-server:
+    image: sds/challenge-server:local
+    build:
+      context: ./challenge-server
+    container_name: sds-challenge
+    entrypoint: ["sh", "/opt/scripts/challenge-start.sh"]
+    environment:
+      CHALLENGE_WRITE_TOKEN: ${SDS_CHALLENGE_WRITE_TOKEN:-local-challenge-token}
+      MAX_CHALLENGE_BYTES: 4096
+    volumes:
+      - ./runtime/challenge:/app/challenges
+      - ./scripts:/opt/scripts:ro
+      - ./configs/challenge.env:/app/.env:ro
+    ports:
+      - "8004:8004"
+
+  ca-server:
+    image: sds/ca-server:local
+    build:
+      context: ./ca-server
+    container_name: sds-ca
+    entrypoint: ["sh", "/opt/scripts/ca-start.sh"]
+    environment:
+      APP_NAME: Agent CA API
+      APP_VERSION: "1.0.0"
+      DOCS_ENABLED: "true"
+      UVICORN_HOST: 0.0.0.0
+      UVICORN_PORT: 8003
+      UVICORN_RELOAD: "false"
+      UVICORN_LOG_LEVEL: info
+      DATABASE_URL: postgresql+psycopg2://sds:sds123@postgres:5432/ca_db
+      CA_CERT_PATH: certs/ca.crt
+      CA_KEY_PATH: certs/ca.key
+      AGENT_CN_DOMAIN_SUFFIX: acps.pub
+      ACME_DIRECTORY_URL: http://10.126.126.8:8003/acps-atr-v2/acme
+      AGENT_REGISTRY_MOCK: "false"
+      HTTP01_VALIDATION_MOCK: "false"
+      AGENT_REGISTRY_URL: http://registry-server:8001/acps-atr-v2
+      AGENT_REGISTRY_TIMEOUT: 10
+      AGENT_REGISTRY_SERVICE_TOKEN: ${SDS_INTERNAL_SERVICE_TOKEN:-local-dev-token}
+      CA_INTERNAL_SERVICE_TOKEN: ${SDS_INTERNAL_SERVICE_TOKEN:-local-dev-token}
+      CA_ADMIN_TOKEN: ${SDS_CA_ADMIN_TOKEN:-local-admin-token}
+      EXTERNAL_SERVICE_MAX_RETRIES: 1
+      EXTERNAL_SERVICE_RETRY_DELAYS: 1
+      HTTP01_VALIDATION_TIMEOUT: 5
+      HTTP01_VALIDATION_RETRIES: 1
+      ATR_MGMT_ALLOW_IP_LIST: 127.0.0.1,::1,172.16.0.0/12,10.0.0.0/8
+    volumes:
+      - ./scripts:/opt/scripts:ro
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      registry-server:
+        condition: service_started
+      challenge-server:
+        condition: service_started

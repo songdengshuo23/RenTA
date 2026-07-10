@@ -1,0 +1,150 @@
+{
+  "username": "travel_batch_20260611010439",
+  "created_at": "2026-06-11T01:04:39.115208+08:00",
+  "results": [
+    {
+      "key": "poi_collector",
+      "name": "POI采集智能体",
+      "upload_file": "client/proxy_upload/poi_collector.json",
+      "create_http": 403,
+      "agent_id": null,
+      "create_body": {
+        "status_code": 403,
+        "error_group": "agent",
+        "error_name": "agent_name_already_claimed",
+        "error_msg": "The name 'POI采集智能体' is already owned by another user. Please choose a different name.",
+        "input_params": {
+          "name": "POI采集智能体"
+        }
+      }
+    },
+    {
+      "key": "amap_data",
+      "name": "高德地图坐标智能体",
+      "upload_file": "client/proxy_upload/amap_data.json",
+      "create_http": 403,
+      "agent_id": null,
+      "create_body": {
+        "status_code": 403,
+        "error_group": "agent",
+        "error_name": "agent_name_already_claimed",
+        "error_msg": "The name '高德地图坐标智能体' is already owned by another user. Please choose a different name.",
+        "input_params": {
+          "name": "高德地图坐标智能体"
+        }
+      }
+    },
+    {
+      "key": "itinerary_planner",
+      "name": "行程规划智能体",
+      "upload_file": "client/proxy_upload/itinerary_planner.json",
+      "create_http": 403,
+      "agent_id": null,
+      "create_body": {
+        "status_code": 403,
+        "error_group": "agent",
+        "error_name": "agent_name_already_claimed",
+        "error_msg": "The name '行程规划智能体' is already owned by another user. Please choose a different name.",
+        "input_params": {
+          "name": "行程规划智能体"
+        }
+      }
+    },
+    {
+      "key": "budget_estimator",
+      "name": "旅行预算评估智能体",
+      "upload_file": "client/proxy_upload/budget_estimator.json",
+      "create_http": 403,
+      "agent_id": null,
+      "create_body": {
+        "status_code": 403,
+        "error_group": "agent",
+        "error_name": "agent_name_already_claimed",
+        "error_msg": "The name '旅行预算评估智能体' is already owned by another user. Please choose a different name.",
+        "input_params": {
+          "name": "旅行预算评估智能体"
+        }
+      }
+    },
+    {
+      "key": "data_compressor",
+      "name": "数据压缩智能体",
+      "upload_file": "client/proxy_upload/data_compressor.json",
+      "create_http": 403,
+      "agent_id": null,
+      "create_body": {
+        "status_code": 403,
+        "error_group": "agent",
+        "error_name": "agent_name_already_claimed",
+        "error_msg": "The name '数据压缩智能体' is already owned by another user. Please choose a different name.",
+        "input_params": {
+          "name": "数据压缩智能体"
+        }
+      }
+    },
+    {
+      "key": "frontend_engineer",
+      "name": "前端可视化智能体",
+      "upload_file": "client/proxy_upload/frontend_engineer.json",
+      "create_http": 403,
+      "agent_id": null,
+      "create_body": {
+        "status_code": 403,
+        "error_group": "agent",
+        "error_name": "agent_name_already_claimed",
+        "error_msg": "The name '前端可视化智能体' is already owned by another user. Please choose a different name.",
+        "input_params": {
+          "name": "前端可视化智能体"
+        }
+      }
+    },
+    {
+      "key": "travel_report",
+      "name": "旅游攻略报告智能体",
+      "upload_file": "client/proxy_upload/travel_report.json",
+      "create_http": 403,
+      "agent_id": null,
+      "create_body": {
+        "status_code": 403,
+        "error_group": "agent",
+        "error_name": "agent_name_already_claimed",
+        "error_msg": "The name '旅游攻略报告智能体' is already owned by another user. Please choose a different name.",
+        "input_params": {
+          "name": "旅游攻略报告智能体"
+        }
+      }
+    },
+    {
+      "key": "content_creator",
+      "name": "社交媒体内容智能体",
+      "upload_file": "client/proxy_upload/content_creator.json",
+      "create_http": 403,
+      "agent_id": null,
+      "create_body": {
+        "status_code": 403,
+        "error_group": "agent",
+        "error_name": "agent_name_already_claimed",
+        "error_msg": "The name '社交媒体内容智能体' is already owned by another user. Please choose a different name.",
+        "input_params": {
+          "name": "社交媒体内容智能体"
+        }
+      }
+    },
+    {
+      "key": "qa_engineer",
+      "name": "前端质量审查智能体",
+      "upload_file": "client/proxy_upload/qa_engineer.json",
+      "create_http": 403,
+      "agent_id": null,
+      "create_body": {
+        "status_code": 403,
+        "error_group": "agent",
+        "error_name": "agent_name_already_claimed",
+        "error_msg": "The name '前端质量审查智能体' is already owned by another user. Please choose a different name.",
+        "input_params": {
+          "name": "前端质量审查智能体"
+        }
+      }
+    }
+  ]
+}

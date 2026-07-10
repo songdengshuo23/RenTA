@@ -1,0 +1,93 @@
+{
+  "name": "高德地图坐标智能体",
+  "version": "1.0.0",
+  "description": "高德地图数据服务专家。接收POI名称/地址→geocode获取GCJ-02坐标。6个API工具：geocode/regeocode/POI搜索/路线规划/周边搜索/坐标转换。决策矩阵：有坐标直接用/有地址调geocode/有名称调POI搜索。拒绝：境外坐标、前端渲染、非地理查询。",
+  "is_ontology": false,
+  "acs": {
+    "aic": "1.2.156.3088.0001.00001.UQJNCO.AMAP02.1.0L5H",
+    "active": true,
+    "lastModifiedTime": "2026-06-11T01:04:39+08:00",
+    "protocolVersion": "02.00",
+    "name": "高德地图坐标智能体",
+    "description": "高德地图数据服务专家。接收POI名称/地址→geocode获取GCJ-02坐标。6个API工具：geocode/regeocode/POI搜索/路线规划/周边搜索/坐标转换。决策矩阵：有坐标直接用/有地址调geocode/有名称调POI搜索。拒绝：境外坐标、前端渲染、非地理查询。",
+    "version": "1.0.0",
+    "iconUrl": "https://example.com/icons/amap_data.png",
+    "documentationUrl": "https://docs.example.com/agents/amap_data",
+    "webAppUrl": "https://demo.example.com/amap_data",
+    "provider": {
+      "countryCode": "CN",
+      "organization": "智能体协作实验室",
+      "department": "多智能体系统部",
+      "url": "https://agents.local",
+      "license": "MIT",
+      "name": "维护人姓名",
+      "email": "owner@example.com"
+    },
+    "securitySchemes": {
+      "mtls": {
+        "type": "mutualTLS",
+        "description": "???? mTLS ????",
+        "x-caChallengeBaseUrl": "http://10.126.126.8:8004/acps-atr-v2"
+      }
+    },
+    "endPoints": [
+      {
+        "url": "http://travel-agent-proxy:8099/agents/amap_data/rpc",
+        "transport": "JSONRPC",
+        "security": [
+          {
+            "mtls": []
+          }
+        ]
+      }
+    ],
+    "capabilities": {
+      "streaming": false,
+      "notification": false,
+      "messageQueue": [
+        "rabbitmq:3.*",
+        "mqtt:5.*",
+        "kafka:>=2.8 <4.0",
+        "redis:>=7.0"
+      ]
+    },
+    "defaultInputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "defaultOutputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "skills": [
+      {
+        "id": "amap-geocoding.coordinate-service",
+        "name": "GCJ-02坐标批量获取",
+        "description": "批量geocode，HTTP/API双层错误处理，工具永不抛异常。输出编号列表+坐标+备注。",
+        "version": "1.0.0",
+        "tags": [
+          "高德API",
+          "坐标转换",
+          "GCJ-02"
+        ],
+        "examples": [
+          "请获取重庆29个POI的GCJ-02坐标"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "outputModes": [
+          "text/plain",
+          "application/json",
+          "text/markdown"
+        ]
+      }
+    ],
+    "entityUserId": "agent_amap_data",
+    "entityMeta": {
+      "environment": "production",
+      "role": "geocoding"
+    }
+  }
+}

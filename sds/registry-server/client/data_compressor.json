@@ -1,0 +1,84 @@
+{
+  "aic": "1.2.156.3088.0001.00001.UQJNCO.CMPR05.1.0L5H",
+  "active": true,
+  "lastModifiedTime": "2026-06-10T18:00:00+08:00",
+  "protocolVersion": "02.00",
+  "name": "数据压缩智能体",
+  "description": "数据清洗压缩专家。接收4个Agent原始输出→压缩为精简JSON。保留坐标/评分/oneliner/时段/预算/tips/省钱技巧/住宿/交通。丢弃来源/地址/描述/搜索策略。输出纯JSON。",
+  "version": "1.0.0",
+  "iconUrl": "https://example.com/icons/data_compressor.png",
+  "documentationUrl": "https://docs.example.com/agents/data_compressor",
+  "webAppUrl": "https://demo.example.com/data_compressor",
+  "provider": {
+    "countryCode": "CN",
+    "organization": "智能体协作实验室",
+    "department": "多智能体系统部",
+    "url": "https://agents.local",
+    "license": "MIT",
+    "name": "维护人姓名",
+    "email": "owner@example.com"
+  },
+  "securitySchemes": {
+    "mtls": {
+      "type": "mutualTLS",
+      "description": "智能体间 mTLS 双向认证",
+      "x-caChallengeBaseUrl": "http://10.126.126.8:8004/acps-atr-v2"
+    }
+  },
+  "endPoints": [
+    {
+      "url": "http://10.126.126.1:8025/agents/data_compressor/rpc",
+      "transport": "JSONRPC",
+      "security": [
+        {}
+      ]
+    }
+  ],
+  "capabilities": {
+    "streaming": false,
+    "notification": false,
+    "messageQueue": [
+      "rabbitmq:3.*",
+      "mqtt:5.*",
+      "kafka:>=2.8 <4.0",
+      "redis:>=7.0"
+    ]
+  },
+  "defaultInputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "defaultOutputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "skills": [
+    {
+      "id": "compress-rules.data-retention",
+      "name": "数据压缩规则",
+      "description": "按保留/丢弃字段规则压缩。输出纯JSON不含解释或markdown标记。",
+      "version": "1.0.0",
+      "tags": [
+        "数据压缩",
+        "JSON输出"
+      ],
+      "examples": [
+        "请将重庆旅游4个Agent输出压缩为JSON"
+      ],
+      "inputModes": [
+        "text/plain",
+        "application/json"
+      ],
+      "outputModes": [
+        "text/plain",
+        "application/json",
+        "text/markdown"
+      ]
+    }
+  ],
+  "entityUserId": "agent_data_compressor",
+  "entityMeta": {
+    "environment": "production",
+    "role": "data-compression"
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "aic": "1.2.156.3088.0001.00001.G7C6F2.QGCXJY.1.0BYT",
+  "active": true,
+  "lastModifiedTime": "2026-06-08T15:29:42.586853+08:00",
+  "protocolVersion": "02.00",
+  "name": "行程规划智能体",
+  "description": "资深旅游行程规划师。输入POI+偏好→RISEN框架+CoT编排多日行程。每天上午/下午/晚上+每餐推荐+备选方案。约束：同区域合并/热门错峰/日≤10h/间距≤50km。纯推理型，无外部工具。拒绝：无POI数据直接生成、实时预订。",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "智能体协作实验室",
+    "department": "多智能体系统部",
+    "url": "https://agents.local",
+    "license": "MIT"
+  },
+  "securitySchemes": {
+    "mtls": {
+      "type": "mutualTLS",
+      "description": "智能体间mTLS双向认证",
+      "x-caChallengeBaseUrl": "http://10.126.126.8:8004/acps-atr-v2"
+    }
+  },
+  "endPoints": [
+    {
+      "url": "http://10.126.126.1:8023/agents/itinerary_planner/rpc",
+      "transport": "JSONRPC",
+      "security": [
+        {
+          "mtls": []
+        }
+      ]
+    }
+  ],
+  "capabilities": {
+    "streaming": false,
+    "notification": false,
+    "messageQueue": [
+      "rabbitmq:3.*",
+      "mqtt:5.*",
+      "kafka:>=2.8 <4.0",
+      "redis:>=7.0"
+    ]
+  },
+  "defaultInputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "defaultOutputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "skills": [
+    {
+      "id": "itinerary-rules.planning-constraints",
+      "name": "行程编排规则",
+      "description": "地理聚类→约束识别→时段编排→逐一验证→输出。含反幻觉规则：置信度标注/暂无法确定/备选方案。",
+      "version": "1.0.0",
+      "tags": [
+        "行程编排",
+        "纯推理",
+        "RISEN"
+      ],
+      "examples": [
+        "请为重庆3天2夜编排行程，含每日三餐推荐"
+      ],
+      "inputModes": [
+        "text/plain",
+        "application/json"
+      ],
+      "outputModes": [
+        "text/plain",
+        "application/json"
+      ]
+    }
+  ]
+}

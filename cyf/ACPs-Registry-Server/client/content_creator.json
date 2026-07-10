@@ -1,0 +1,75 @@
+{
+  "aic": "1.2.156.3088.0001.00001.NRZ72F.GCV4PH.1.19QY",
+  "active": true,
+  "lastModifiedTime": "2026-06-08T15:29:52.013652+08:00",
+  "protocolVersion": "02.00",
+  "name": "社交媒体内容智能体",
+  "description": "旅游社媒创作者。输入POI+行程→小红书(标题+emoji+hashtag)/朋友圈(简洁精致)/短视频脚本(钩子→展示→互动)三端内容。禁止AI味，真实感优先。",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "智能体协作实验室",
+    "department": "多智能体系统部",
+    "url": "https://agents.local",
+    "license": "MIT"
+  },
+  "securitySchemes": {
+    "mtls": {
+      "type": "mutualTLS",
+      "description": "智能体间mTLS双向认证",
+      "x-caChallengeBaseUrl": "http://10.126.126.8:8004/acps-atr-v2"
+    }
+  },
+  "endPoints": [
+    {
+      "url": "http://10.126.126.1:8028/agents/content_creator/rpc",
+      "transport": "JSONRPC",
+      "security": [
+        {
+          "mtls": []
+        }
+      ]
+    }
+  ],
+  "capabilities": {
+    "streaming": false,
+    "notification": false,
+    "messageQueue": [
+      "rabbitmq:3.*",
+      "mqtt:5.*",
+      "kafka:>=2.8 <4.0",
+      "redis:>=7.0"
+    ]
+  },
+  "defaultInputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "defaultOutputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "skills": [
+    {
+      "id": "social-media-rules.platform-rules",
+      "name": "多平台创作规范",
+      "description": "小红书/朋友圈/短视频各平台格式+反AI味规则+风格自适应。",
+      "version": "1.0.0",
+      "tags": [
+        "内容创作",
+        "小红书",
+        "短视频"
+      ],
+      "examples": [
+        "请为重庆3天2夜旅游生成社媒内容"
+      ],
+      "inputModes": [
+        "text/plain",
+        "application/json"
+      ],
+      "outputModes": [
+        "text/plain",
+        "application/json"
+      ]
+    }
+  ]
+}

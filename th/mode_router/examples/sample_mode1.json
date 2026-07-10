@@ -1,0 +1,36 @@
+{
+  "task": "analyze quarterly sales data and generate a one-page report",
+  "hints": {
+    "estimated_skill_count": 3
+  },
+  "skills": [
+    {
+      "aic": "agent-data-1",
+      "agent_name": "DataOps Agent",
+      "skillid": "query-sales-db",
+      "skill_name": "query_sales_db",
+      "score": 0.93
+    },
+    {
+      "aic": "agent-data-1",
+      "agent_name": "DataOps Agent",
+      "skillid": "build-chart",
+      "skill_name": "build_chart",
+      "score": 0.89
+    },
+    {
+      "aic": "agent-data-1",
+      "agent_name": "DataOps Agent",
+      "skillid": "generate-ppt",
+      "skill_name": "generate_ppt",
+      "score": 0.86
+    },
+    {
+      "aic": "agent-legal-1",
+      "agent_name": "Legal Agent",
+      "skillid": "review-contract",
+      "skill_name": "review_contract",
+      "score": 0.22
+    }
+  ]
+}

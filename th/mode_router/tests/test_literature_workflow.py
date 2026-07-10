@@ -1,0 +1,259 @@
+import asyncio
+import sys
+import tempfile
+import types
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from literature_workflow import (
+    AgentRef,
+    build_run_status_summary,
+    build_state_timeline_markdown,
+    build_tree_plan,
+    build_workflow_hints,
+    execute_group_workflow,
+    filter_literature_skills,
+    resolve_role_agents,
+)
+
+
+class LiteratureWorkflowTests(unittest.TestCase):
+    def test_filter_literature_skills_prefers_literature_agents(self):
+        skills = [
+            {'aic': 'tour', 'agent_name': 'travel agent', 'skillid': 'travel.plan', 'acs': {'name': 'travel agent', 'description': 'travel planning'}},
+            {'aic': 'search', 'agent_name': 'literature search agent', 'skillid': 'literature_search.comprehensive-search', 'acs': {'name': 'literature search agent', 'description': 'paper search'}},
+        ]
+        filtered = filter_literature_skills(skills)
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]['aic'], 'search')
+
+    def test_resolve_role_agents(self):
+        skills = [
+            {'aic': 'a1', 'agent_name': 'search agent', 'skillid': 'literature_search.comprehensive-search', 'acs': {'endPoints': [{'url': 'http://127.0.0.1:8021/agents/literature_search/rpc'}]}},
+            {'aic': 'a2', 'agent_name': 'analysis agent', 'skillid': 'literature_analysis.deep-reading', 'acs': {'endPoints': [{'url': 'http://127.0.0.1:8022/agents/literature_analysis/rpc'}]}},
+            {'aic': 'a3', 'agent_name': 'writing agent', 'skillid': 'literature_writing.academic-writing', 'acs': {'endPoints': [{'url': 'http://127.0.0.1:8023/agents/literature_writing/rpc'}]}},
+        ]
+        roles = resolve_role_agents(skills)
+        self.assertEqual(roles['search'].aic, 'a1')
+        self.assertEqual(roles['analysis'].aic, 'a2')
+        self.assertEqual(roles['writing'].aic, 'a3')
+
+    def test_resolve_role_agents_falls_back_for_generic_agents(self):
+        skills = [
+            {'aic': 'a1', 'agent_name': 'Agent Alpha', 'skillid': 'alpha.plan', 'score': 0.95, 'acs': {'endPoints': [{'url': 'http://127.0.0.1:8021/rpc'}]}},
+            {'aic': 'a2', 'agent_name': 'Agent Beta', 'skillid': 'beta.review', 'score': 0.9, 'acs': {'endPoints': [{'url': 'http://127.0.0.1:8022/rpc'}]}},
+            {'aic': 'a3', 'agent_name': 'Agent Gamma', 'skillid': 'gamma.write', 'score': 0.85, 'acs': {'endPoints': [{'url': 'http://127.0.0.1:8023/rpc'}]}},
+        ]
+        roles = resolve_role_agents(skills)
+        self.assertEqual({roles['search'].aic, roles['analysis'].aic, roles['writing'].aic}, {'a1', 'a2', 'a3'})
+
+    def test_build_workflow_hints(self):
+        hints = build_workflow_hints({'recommended_skill_count': 3, 'requires_independent_roles': True, 'parallelizable': False})
+        self.assertEqual(hints['estimated_skill_count'], 3)
+        self.assertTrue(hints['requires_independent_roles'])
+        self.assertFalse(hints['parallelizable'])
+
+    def test_build_run_status_summary_and_timeline(self):
+        checklist = {
+            'steps': [
+                {'stage': 'user_input', 'status': 'done'},
+                {'stage': 'agent_search', 'status': 'done'},
+            ]
+        }
+        tree_plan = {
+            'children': [
+                {'role': 'search', 'agent_name': 'search agent', 'depends_on_roles': []},
+            ]
+        }
+        step_results = [
+            {
+                'role': 'search',
+                'agent': {'name': 'search agent'},
+                'task_id': 'task-search',
+                'final_state': 'awaiting-completion',
+                'output_length': 128,
+                'depends_on_roles': [],
+                'feedback_in_prompt': False,
+                'upstream_compression_ratio': 1.0,
+            }
+        ]
+        events = [
+            {'timestamp': 't1', 'stage': 'workflow_start', 'state': 'running', 'message': 'start'},
+            {'timestamp': 't2', 'stage': 'agent_dispatch', 'state': 'waiting_summary', 'role': 'search', 'agent_name': 'search agent', 'message': 'ready'},
+            {'timestamp': 't3', 'stage': 'workflow_complete', 'state': 'done', 'message': 'done'},
+        ]
+
+        summary = build_run_status_summary(
+            task='task',
+            plan={'strategy': 'tree_root_parallel_children'},
+            tree_plan=tree_plan,
+            step_results=step_results,
+            checklist=checklist,
+            events=events,
+        )
+        timeline = build_state_timeline_markdown('task', 'trace-1', summary, events)
+
+        self.assertEqual(summary['status'], 'done')
+        self.assertEqual(summary['progress']['percent'], 100)
+        self.assertEqual(summary['roles'][0]['role'], 'search')
+        self.assertIn('workflow_complete', timeline)
+        self.assertIn('| 3 | t3 | done | workflow_complete |', timeline)
+
+    def test_build_tree_plan_fans_in_writing_for_parallel_flow(self):
+        role_agents = {
+            'search': AgentRef('search', 'a1', 'search agent', 'http://127.0.0.1:8021/rpc', [], []),
+            'analysis': AgentRef('analysis', 'a2', 'analysis agent', 'http://127.0.0.1:8022/rpc', [], []),
+            'writing': AgentRef('writing', 'a3', 'writing agent', 'http://127.0.0.1:8023/rpc', [], []),
+        }
+        plan = {
+            'strategy': 'tree_root_parallel_children',
+            'root_package': {'package_id': 'root', 'agent': {'aic': 'root', 'name': 'root'}},
+            'orchestration_tree': {
+                'children': [
+                    {'node_id': 'node-search', 'agent': {'aic': 'a1'}, 'depends_on': []},
+                    {'node_id': 'node-analysis', 'agent': {'aic': 'a2'}, 'depends_on': []},
+                    {'node_id': 'node-writing', 'agent': {'aic': 'a3'}, 'depends_on': []},
+                ]
+            },
+        }
+        tree = build_tree_plan('task', role_agents, {'mode': 'mode_2'}, plan)
+        children = {item['role']: item for item in tree['children']}
+        self.assertEqual(children['search']['depends_on_roles'], [])
+        self.assertEqual(children['analysis']['depends_on_roles'], [])
+        self.assertEqual(children['writing']['depends_on_roles'], ['search', 'analysis'])
+        self.assertEqual(children['writing']['depends_on'], ['node-search', 'node-analysis'])
+
+    def test_build_tree_plan_uses_role_dependencies_for_sequential_flow(self):
+        role_agents = {
+            'search': AgentRef('search', 'a1', 'search agent', 'http://127.0.0.1:8021/rpc', [], []),
+            'analysis': AgentRef('analysis', 'a2', 'analysis agent', 'http://127.0.0.1:8022/rpc', [], []),
+            'writing': AgentRef('writing', 'a3', 'writing agent', 'http://127.0.0.1:8023/rpc', [], []),
+        }
+        plan = {
+            'strategy': 'tree_root_sequential_children',
+            'root_package': {'package_id': 'root', 'agent': {'aic': 'root', 'name': 'root'}},
+            'orchestration_tree': {
+                'children': [
+                    {'node_id': 'node-writing', 'agent': {'aic': 'a3'}, 'depends_on': ['node-analysis']},
+                    {'node_id': 'node-search', 'agent': {'aic': 'a1'}, 'depends_on': ['node-writing']},
+                    {'node_id': 'node-analysis', 'agent': {'aic': 'a2'}, 'depends_on': ['node-search']},
+                ]
+            },
+        }
+        tree = build_tree_plan('task', role_agents, {'mode': 'mode_2'}, plan)
+        children = {item['role']: item for item in tree['children']}
+        self.assertEqual(children['search']['depends_on_roles'], [])
+        self.assertEqual(children['analysis']['depends_on_roles'], ['search'])
+        self.assertEqual(children['writing']['depends_on_roles'], ['analysis'])
+        self.assertEqual(children['analysis']['depends_on'], ['node-search'])
+        self.assertEqual(children['writing']['depends_on'], ['node-analysis'])
+
+    def test_execute_group_workflow_uses_group_session_and_feedback_chain(self):
+        class FakeTaskState:
+            AwaitingCompletion = 'awaiting-completion'
+            Completed = 'completed'
+            Failed = 'failed'
+            Rejected = 'rejected'
+            Canceled = 'canceled'
+
+        class FakeACSObject:
+            def __init__(self, aic):
+                self.aic = aic
+
+        class FakeLeaderMqClient:
+            def __init__(self, session):
+                self.session = session
+
+            async def start_task(self, session_id, text_content, task_id, mentions):
+                role = task_id.rsplit('-', 1)[-1]
+                self.session.started.append((role, text_content))
+                self.session.snapshots[(task_id, mentions[0])] = {
+                    'state': FakeTaskState.AwaitingCompletion,
+                    'product_text': f'{role}-output',
+                }
+
+            async def complete_task(self, task_id, session_id, mentions):
+                self.session.completed.append(task_id)
+
+        class FakeGroupSession:
+            def __init__(self):
+                self.started = []
+                self.completed = []
+                self.snapshots = {}
+                self.leader_mq_client = FakeLeaderMqClient(self)
+
+            def get_partner_task_snapshot(self, task_id, aic):
+                return self.snapshots.get((task_id, aic))
+
+        class FakeGroupLeader:
+            last_session = None
+
+            def __init__(self, leader_aic, rabbitmq_config):
+                self.leader_aic = leader_aic
+                self.rabbitmq_config = rabbitmq_config
+                self.invited = []
+
+            async def create_group_session(self, session_id, initial_partners):
+                self.session = FakeGroupSession()
+                FakeGroupLeader.last_session = self.session
+                return self.session
+
+            async def invite_partner(self, session_id, partner_acs, partner_rpc_url):
+                self.invited.append((partner_acs.aic, partner_rpc_url))
+
+        fake_aip = types.ModuleType('acps_sdk.aip')
+        fake_aip.GroupLeader = FakeGroupLeader
+        fake_aip.ACSObject = FakeACSObject
+        fake_aip.TaskState = FakeTaskState
+        fake_sdk = types.ModuleType('acps_sdk')
+        fake_sdk.aip = fake_aip
+        old_modules = {name: sys.modules.get(name) for name in ('acps_sdk', 'acps_sdk.aip')}
+        sys.modules['acps_sdk'] = fake_sdk
+        sys.modules['acps_sdk.aip'] = fake_aip
+        try:
+            role_agents = {
+                'search': AgentRef('search', 'a1', 'search agent', 'http://127.0.0.1:8021/agents/literature_search/rpc', [], []),
+                'analysis': AgentRef('analysis', 'a2', 'analysis agent', 'http://127.0.0.1:8022/agents/literature_analysis/rpc', [], []),
+                'writing': AgentRef('writing', 'a3', 'writing agent', 'http://127.0.0.1:8023/agents/literature_writing/rpc', [], []),
+            }
+            tree_plan = {
+                'children': [
+                    {'node_id': 'child-search', 'role': 'search', 'depends_on_roles': []},
+                    {'node_id': 'child-analysis', 'role': 'analysis', 'depends_on_roles': ['search'], 'depends_on': ['child-search']},
+                    {'node_id': 'child-writing', 'role': 'writing', 'depends_on_roles': ['search', 'analysis'], 'depends_on': ['child-search', 'child-analysis']},
+                ]
+            }
+            with tempfile.TemporaryDirectory() as tmpdir:
+                results = asyncio.run(
+                    execute_group_workflow(
+                        task='task',
+                        decomposition={'topic': 'topic'},
+                        role_agents=role_agents,
+                        tree_plan=tree_plan,
+                        run_dir=Path(tmpdir),
+                        session_id='session-1',
+                        trace_id='trace-1',
+                    )
+                )
+        finally:
+            for name, module in old_modules.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
+        self.assertEqual([item['role'] for item in results], ['search', 'analysis', 'writing'])
+        self.assertTrue(all(item['group_mode'] for item in results))
+        self.assertEqual(results[1]['depends_on_roles'], ['search'])
+        self.assertEqual(results[2]['depends_on_roles'], ['search', 'analysis'])
+        self.assertTrue(results[1]['feedback_in_prompt'])
+        self.assertIn('search-output', results[1]['compressed_upstream_text'])
+        self.assertIn('search-output', results[2]['compressed_upstream_text'])
+        self.assertIn('analysis-output', results[2]['compressed_upstream_text'])
+        self.assertEqual([role for role, _ in FakeGroupLeader.last_session.started], ['search', 'analysis', 'writing'])
+
+
+if __name__ == '__main__':
+    unittest.main()

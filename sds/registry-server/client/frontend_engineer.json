@@ -1,0 +1,86 @@
+{
+  "aic": "1.2.156.3088.0001.00001.UQJNCO.FEND06.1.0L5H",
+  "active": true,
+  "lastModifiedTime": "2026-06-10T18:00:00+08:00",
+  "protocolVersion": "02.00",
+  "name": "前端可视化智能体",
+  "description": "资深前端工程师。输入压缩JSON→Vue3单文件HTML地图页面。含Polyline连线/DayTab/InfoWindow弹窗/tips面板/budget按钮。高德JS API 2.0 CDN加载。禁止npm/Vite，只生成单文件HTML。",
+  "version": "1.0.0",
+  "iconUrl": "https://example.com/icons/frontend_engineer.png",
+  "documentationUrl": "https://docs.example.com/agents/frontend_engineer",
+  "webAppUrl": "https://demo.example.com/frontend_engineer",
+  "provider": {
+    "countryCode": "CN",
+    "organization": "智能体协作实验室",
+    "department": "多智能体系统部",
+    "url": "https://agents.local",
+    "license": "MIT",
+    "name": "维护人姓名",
+    "email": "owner@example.com"
+  },
+  "securitySchemes": {
+    "mtls": {
+      "type": "mutualTLS",
+      "description": "智能体间 mTLS 双向认证",
+      "x-caChallengeBaseUrl": "http://10.126.126.8:8004/acps-atr-v2"
+    }
+  },
+  "endPoints": [
+    {
+      "url": "http://10.126.126.1:8026/agents/frontend_engineer/rpc",
+      "transport": "JSONRPC",
+      "security": [
+        {}
+      ]
+    }
+  ],
+  "capabilities": {
+    "streaming": false,
+    "notification": false,
+    "messageQueue": [
+      "rabbitmq:3.*",
+      "mqtt:5.*",
+      "kafka:>=2.8 <4.0",
+      "redis:>=7.0"
+    ]
+  },
+  "defaultInputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "defaultOutputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "skills": [
+    {
+      "id": "web-design-engineer.design-system",
+      "name": "Web设计规范",
+      "description": "完整设计系统+反AI风格清单+Cookie最佳实践+7步自检+交付前检查。",
+      "version": "1.0.0",
+      "tags": [
+        "前端开发",
+        "Vue3",
+        "高德地图",
+        "可视化"
+      ],
+      "examples": [
+        "请生成重庆3天2夜旅游地图可视化HTML"
+      ],
+      "inputModes": [
+        "text/plain",
+        "application/json"
+      ],
+      "outputModes": [
+        "text/plain",
+        "application/json",
+        "text/markdown"
+      ]
+    }
+  ],
+  "entityUserId": "agent_frontend_engineer",
+  "entityMeta": {
+    "environment": "production",
+    "role": "frontend-visualization"
+  }
+}

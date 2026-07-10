@@ -1,0 +1,76 @@
+{
+  "aic": "1.2.156.3088.0001.00001.WC4X6A.5G7HP0.1.0UY0",
+  "active": true,
+  "lastModifiedTime": "2026-06-08T15:29:48.211129+08:00",
+  "protocolVersion": "02.00",
+  "name": "前端可视化智能体",
+  "description": "资深前端工程师。输入压缩JSON→Vue3单文件HTML地图页面。含Polyline连线/DayTab/InfoWindow弹窗/tips面板/budget按钮。高德JS API 2.0 CDN加载。禁止npm/Vite，只生成单文件HTML。",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "智能体协作实验室",
+    "department": "多智能体系统部",
+    "url": "https://agents.local",
+    "license": "MIT"
+  },
+  "securitySchemes": {
+    "mtls": {
+      "type": "mutualTLS",
+      "description": "智能体间mTLS双向认证",
+      "x-caChallengeBaseUrl": "http://10.126.126.8:8004/acps-atr-v2"
+    }
+  },
+  "endPoints": [
+    {
+      "url": "http://10.126.126.1:8026/agents/frontend_engineer/rpc",
+      "transport": "JSONRPC",
+      "security": [
+        {
+          "mtls": []
+        }
+      ]
+    }
+  ],
+  "capabilities": {
+    "streaming": false,
+    "notification": false,
+    "messageQueue": [
+      "rabbitmq:3.*",
+      "mqtt:5.*",
+      "kafka:>=2.8 <4.0",
+      "redis:>=7.0"
+    ]
+  },
+  "defaultInputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "defaultOutputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "skills": [
+    {
+      "id": "web-design-engineer.design-system",
+      "name": "Web设计规范",
+      "description": "完整设计系统+反AI风格清单+Cookie最佳实践+7步自检+交付前检查。",
+      "version": "1.0.0",
+      "tags": [
+        "前端开发",
+        "Vue3",
+        "高德地图",
+        "可视化"
+      ],
+      "examples": [
+        "请生成重庆3天2夜旅游地图可视化HTML"
+      ],
+      "inputModes": [
+        "text/plain",
+        "application/json"
+      ],
+      "outputModes": [
+        "text/plain",
+        "application/json"
+      ]
+    }
+  ]
+}

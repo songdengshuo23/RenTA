@@ -1,0 +1,38 @@
+{
+  "task": "prepare a product expansion plan including market entry, compliance risk, technical retrofit, and budget estimation",
+  "hints": {
+    "estimated_skill_count": 4,
+    "requires_independent_roles": true,
+    "parallelizable": true
+  },
+  "skills": [
+    {
+      "aic": "agent-market-1",
+      "agent_name": "Market Agent",
+      "skillid": "market-entry",
+      "skill_name": "market_entry_strategy",
+      "score": 0.92
+    },
+    {
+      "aic": "agent-legal-1",
+      "agent_name": "Legal Agent",
+      "skillid": "compliance-review",
+      "skill_name": "compliance_review",
+      "score": 0.91
+    },
+    {
+      "aic": "agent-eng-1",
+      "agent_name": "Engineering Agent",
+      "skillid": "tech-retrofit",
+      "skill_name": "technical_retrofit_plan",
+      "score": 0.89
+    },
+    {
+      "aic": "agent-fin-1",
+      "agent_name": "Finance Agent",
+      "skillid": "budget-estimation",
+      "skill_name": "budget_estimation",
+      "score": 0.9
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "name": "POI采集智能体",
+  "version": "1.0.0",
+  "description": "旅游POI采集助手。输入地区名，Tavily搜索马蜂窝/携程/大众点评/小红书→输出结构化食/住/景点打卡点三大板块。每条POI含名称/分类/地址/评分/简介/建议/来源。拒绝：非旅游搜索、实时价格查询、交通规划。",
+  "is_ontology": false,
+  "acs": {
+    "aic": "1.2.156.3088.0001.00001.UQJNCO.POIC01.1.0L5H",
+    "active": true,
+    "lastModifiedTime": "2026-06-11T01:04:39+08:00",
+    "protocolVersion": "02.00",
+    "name": "POI采集智能体",
+    "description": "旅游POI采集助手。输入地区名，Tavily搜索马蜂窝/携程/大众点评/小红书→输出结构化食/住/景点打卡点三大板块。每条POI含名称/分类/地址/评分/简介/建议/来源。拒绝：非旅游搜索、实时价格查询、交通规划。",
+    "version": "1.0.0",
+    "iconUrl": "https://example.com/icons/poi_collector.png",
+    "documentationUrl": "https://docs.example.com/agents/poi_collector",
+    "webAppUrl": "https://demo.example.com/poi_collector",
+    "provider": {
+      "countryCode": "CN",
+      "organization": "智能体协作实验室",
+      "department": "多智能体系统部",
+      "url": "https://agents.local",
+      "license": "MIT",
+      "name": "维护人姓名",
+      "email": "owner@example.com"
+    },
+    "securitySchemes": {
+      "mtls": {
+        "type": "mutualTLS",
+        "description": "???? mTLS ????",
+        "x-caChallengeBaseUrl": "http://10.126.126.8:8004/acps-atr-v2"
+      }
+    },
+    "endPoints": [
+      {
+        "url": "http://travel-agent-proxy:8099/agents/poi_collector/rpc",
+        "transport": "JSONRPC",
+        "security": [
+          {
+            "mtls": []
+          }
+        ]
+      }
+    ],
+    "capabilities": {
+      "streaming": false,
+      "notification": false,
+      "messageQueue": [
+        "rabbitmq:3.*",
+        "mqtt:5.*",
+        "kafka:>=2.8 <4.0",
+        "redis:>=7.0"
+      ]
+    },
+    "defaultInputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "defaultOutputModes": [
+      "text/plain",
+      "application/json"
+    ],
+    "skills": [
+      {
+        "id": "poi_formatter.search-strategy",
+        "name": "三阶段搜索策略",
+        "description": "第一阶段综合平台→第二阶段社交媒体→第三阶段住宿美食搜索→数据融合去重。",
+        "version": "1.0.0",
+        "tags": [
+          "POI采集",
+          "搜索策略",
+          "数据融合"
+        ],
+        "examples": [
+          "请搜索重庆高分旅游POI，输出食/住/景点打卡点三大板块"
+        ],
+        "inputModes": [
+          "text/plain",
+          "application/json"
+        ],
+        "outputModes": [
+          "text/plain",
+          "application/json",
+          "text/markdown"
+        ]
+      }
+    ],
+    "entityUserId": "agent_poi_collector",
+    "entityMeta": {
+      "environment": "production",
+      "role": "data-collection"
+    }
+  }
+}
