@@ -23,7 +23,7 @@
 | 阶段 1：AIC/ACS 兼容升级（已完成） | 支持 AIC v02.01、ACS v02.01 | 升级 `aic.py`、双 Schema、Agent 申请/审批和 Supervisor 逻辑 | 旧 AIC v02.00 保留 legacy validator；v2.1 写入受开关控制 | 新旧 AIC/ACS 双轨可用；代码提交 `2e9bd07` |
 | 阶段 2：Registry EAB 旁路能力（已完成） | 引入新版 Registry 的 EAB 生成和一次性消费能力 | 增加 `app/eab`、SM4、migration、EAB API 和隔离迁移门禁 | 默认关闭；不覆盖 `points/events/Passport/Supervisor`，旧 `/api` 继续可用 | Registry 支持 EAB；代码提交 `0e8baf4` |
 | 阶段 3：CA 发证链路升级（已完成） | 从 HTTP-01 Challenge 切到 EAB | 引入 `eab_verifier.py`、Registry EAB client，修改 ACME `new-account/new-order/finalize` 和 v2.1 证书 CN/SAN | Challenge Server 保留 legacy，旧 account/证书继续可用，默认开关关闭 | EAB 隔离端到端发证通过；提交 `fed618e`；CA `131 passed` |
-| 阶段 4：前端与网关兼容适配 | 前端支持新版字段但不破坏旧页面 | Agent 申请页支持 ACS 02.01、certificate、AMQP endpoint；网关新增 EAB/CA 分流 | 旧页面、旧接口、旧字段继续兼容；`/api` 不改成强制 `/api/v1` | 前端可申请新版 Agent |
+| 阶段 4：前端与网关兼容适配（已完成） | 前端支持新版字段但不破坏旧页面 | Agent 申请页支持 ACS 02.01、certificate、AMQP endpoint；网关新增 EAB/CA 分流和外部 URL 重写 | 新前端/EAB 默认关闭；旧 02.00、`/api`、Registry 路径不变 | 双轨前端与网关已完成；提交 `c467b00` |
 | 阶段 5：Discovery 适配 | 引入新版 Discovery 查询能力 | 接入 `/acps-adp-v2/discover`，Registry DSP 同步适配 | Mode Router 保留旧 `passports/discovery` fallback | Discovery 优先、Registry fallback |
 | 阶段 6：MQ Inbox / mTLS 增强 | 支持新版 AIP 群组通信 | 引入 mq-auth-server、AMQPS、Inbox endpoint、SDK 调用适配 | Direct RPC / HTTP 调度不删除，失败自动 fallback | 新版 MQ Inbox 可灰度使用 |
 | 阶段 7：全量回归与灰度上线 | 确认升级不影响既有功能 | 跑页面、API、数据、发证、编排、积分、事件回归 | 发现问题关闭对应开关回滚 | 可上线版本与回滚方案 |
@@ -106,7 +106,23 @@ ACPS_EAB_ISSUANCE_ENABLED=false
 alembic_version=d4e5f6a7b8c9
 ```
 
-下一步进入阶段 4：在 `wyl/frontend` 增加 ACS 02.01 certificate/AMQP 表单与 EAB 申请流程，在 `wyl/server/server.py` 增加 Registry EAB 和 CA 路由转发，但保留旧页面、旧 `/api`、积分、事件、Passport 和 Supervisor。阶段 4 详细顺序见阶段 3 完成报告第 7 节。
+阶段 3 完成时确定的阶段 4 边界为：在 `wyl/frontend` 增加 ACS 02.01 certificate/AMQP 表单与 EAB 申请流程，在 `wyl/server/server.py` 增加 Registry EAB 和 CA 路由转发，同时保留旧页面、旧 `/api`、积分、事件、Passport 和 Supervisor。该边界已按下述结果完成。
+
+### 阶段 4 完成状态与阶段 5 入口
+
+2026-07-10 已在远端 `upgrade/acps-v2.1-frontend-gateway` 分支完成阶段 4，代码提交为 `c467b00cf456ed85f421d4e3b6f6298cc4c44aeb`，完整记录见 `STAGE4_FRONTEND_GATEWAY_UPGRADE.md`。
+
+已完成：
+
+- 前端 ACS 02.00/02.01 双轨；02.01 支持 `{AIC}`、`HTTP_JSON`、AMQP、certificate SAN 和有效期。
+- EAB 凭据通过 `/acps-atr-v2/eab/{aic}` 获取，只在页面内存展示，支持主动/定时/离开路由清除，不写 Web Storage 或日志。
+- 8888 网关按路径把 Registry EAB/ACS 与 CA ACME/CA/CRL/OCSP 分流，保留外部 Host、Location 和 Replay-Nonce。
+- CA Directory 内部 `localhost:8003` URL 自动改写为外部 8888 origin。
+- 新增 `ACPS_FRONTEND_V21_ENABLED` 和 `ACPS_FRONTEND_EAB_ENABLED`，生产均为 `false`。
+- 阶段 4 网关专项 `12 passed`、前端 payload 测试通过；浏览器桌面/移动端 0 error。
+- 总门禁：HTTP `18/18`、Registry `133 passed`、CA `131 passed`、Challenge `4 passed`、Mode Router `42 + 1 + 11 passed`。
+
+生产未启用 v2.1 前端和 EAB，旧页面与旧 API 行为不变；新增 CA Directory 经 8888 真实验证通过。下一步进入阶段 5：适配 Discovery v2.1 与 Mode Router 响应解析，采用“新版 Discovery 优先、Registry Passport fallback”，阶段 5 不切换 MQ 执行链路。
 
 ### 远端已联通后的实际基线与整理结果
 
@@ -764,6 +780,8 @@ export PYTHONPATH=/home/johnteller/team_ws/sds/registry-server:/home/johnteller/
 
 ## 6. 前端与网关改造清单
 
+**实施状态（2026-07-10）：阶段 4 已完成。** 运行时代码位于远端 `wyl/frontend/assets/agent-apply-bridge.*` 和 `wyl/server/server.py`，提交为 `c467b00`；生产新 UI/EAB 开关保持关闭。详细验证与回滚记录见 `STAGE4_FRONTEND_GATEWAY_UPGRADE.md`。
+
 ### 6.1 前端 API baseURL
 
 当前：
@@ -783,14 +801,15 @@ export const modeRouterApi = axios.create({ baseURL: '/mode-router' })
 
 | UI/逻辑 | 当前 | 新版修改 |
 |---|---|---|
-| 协议版本 | 固定 `02.00` | 改 `02.01` |
-| AIC | 前端临时生成非法/占位 AIC | 前端只填 `{AIC}` 占位或空；审批后后端写入 |
-| mTLS | 必填 challenge URL | 删除 challenge 必填 |
-| transport | `HTTP` | 改为 `JSONRPC`/`HTTP_JSON`/`AMQP` |
-| certificate | 无 | 增加 SAN DNS/IP、有效期字段 |
-| AMQP | 无 | 增加 Inbox endpoint 模板 |
-| 预览 ACS | 旧 schema | 更新到 v02.01 |
-| 表单校验 | URL/challenge 校验 | transport 对应校验：JSONRPC URL、HTTP_JSON base URL、AMQP URL |
+| 协议版本 | 固定 `02.00` | 已实现 02.00/02.01 双轨，开关开启时默认 02.01 |
+| AIC | 前端临时生成 AIC | 02.00 保留旧行为；02.01 使用 `{AIC}`，审批后后端写入 |
+| mTLS | 必填 challenge URL | 02.00 保留；02.01 不写 challenge |
+| transport | `JSONRPC`/`HTTP`/`SSE`/`WEBSOCKET` | 02.00 保留；02.01 使用 `JSONRPC`/`HTTP_JSON`，AMQP 为附加 endpoint |
+| certificate | 无 | 已增加 SAN DNS/IP、有效期字段 |
+| AMQP | 无 | 已增加 Inbox endpoint 模板和 messageQueue 版本 |
+| EAB | 无 | 已增加一次性凭据获取、复制、主动/定时清除，不持久化 `macKey` |
+| 预览 ACS | 旧 schema | 已按当前协议实时预览 02.00/02.01 |
+| 表单校验 | URL/challenge 校验 | 已按协议校验 transport、AMQP URL、消息队列版本和有效期 |
 
 ### 6.3 网关 `server.py`
 
@@ -805,7 +824,7 @@ export const modeRouterApi = axios.create({ baseURL: '/mode-router' })
 ("/acps-adp-v2/",   "http://localhost:8005/",  False),
 ```
 
-**升级修改**
+**升级修改（阶段 4 已实现）**
 
 | 路由 | 短期目标 | 长期目标 |
 |---|---|---|
@@ -820,7 +839,9 @@ export const modeRouterApi = axios.create({ baseURL: '/mode-router' })
 | `/mq-auth/` | 新增 mq-auth-server | mq-auth-server |
 | `/mode-router/` | 保持 | 保持 |
 
-注意：现在 `/acps-atr-v2/` 全部指到 Registry。升级 EAB/CA 后，应按路径细分 Registry 与 CA，否则 ACME 发证接口会走错服务。
+阶段 4 前 `/acps-atr-v2/` 全部指到 Registry；如果不按路径细分 Registry 与 CA，ACME 发证接口会走错服务。
+
+阶段 4 已修正上述问题：EAB/Agent/ACS 保持 Registry `8001`，`/acme`、`/ca`、`/crl`、`/ocsp` 转到 CA `8003`；同时重写 CA 返回的内部 URL/Location 并保留 Replay-Nonce。`/api`、`/mode-router`、`/acps-dsp-v2`、`/acps-adp-v2` 均未改变。
 
 ---
 
