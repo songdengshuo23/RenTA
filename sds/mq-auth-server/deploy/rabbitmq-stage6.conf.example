@@ -1,0 +1,28 @@
+# Additive RenTA ACPs v2.1 listener. The existing PLAIN listener remains online.
+listeners.tcp.default = 5672
+listeners.ssl.default = 5671
+
+ssl_options.cacertfile = /etc/rabbitmq/stage6-certs/acps-root-ca.pem
+ssl_options.certfile = /etc/rabbitmq/stage6-certs/rabbitmq-server.pem
+ssl_options.keyfile = /etc/rabbitmq/stage6-certs/rabbitmq-server.key
+ssl_options.verify = verify_peer
+ssl_options.fail_if_no_peer_cert = true
+ssl_options.versions.1 = tlsv1.3
+ssl_options.depth = 2
+
+management.tcp.port = 15672
+
+auth_mechanisms.1 = EXTERNAL
+auth_mechanisms.2 = PLAIN
+ssl_cert_login_from = common_name
+
+auth_backends.1 = internal
+auth_backends.2 = cache
+auth_cache.cached_backend = http
+auth_cache.cache_ttl = 15000
+
+auth_http.user_path = https://127.0.0.1:9008/auth/user
+auth_http.vhost_path = https://127.0.0.1:9008/auth/vhost
+auth_http.resource_path = https://127.0.0.1:9008/auth/resource
+auth_http.topic_path = https://127.0.0.1:9008/auth/topic
+auth_http.http_method = post

@@ -204,6 +204,39 @@ start_discovery() {
   }
 }
 
+start_mq_auth() {
+  local enabled="${ACPS_MQ_AUTH_ENABLED:-false}"
+  case "${enabled,,}" in
+    1|true|yes|on) ;;
+    *)
+      echo "mq_auth:disabled"
+      return 0
+      ;;
+  esac
+
+  local dir="$ROOT/sds/mq-auth-server"
+  local log="$ROOT/server_logs/sds-mq-auth-v21.log"
+  mkdir -p "$ROOT/server_logs" "$dir/logs"
+  if port_listening 9007 && port_listening 9008; then
+    echo "mq_auth:already_listening"
+    return 0
+  fi
+  if port_listening 9007 || port_listening 9008; then
+    echo "mq_auth:partial_listener_state" >&2
+    return 1
+  fi
+  (
+    cd "$dir"
+    nohup ./start.sh > "$log" 2>&1 &
+    echo $! > "$dir/logs/service.pid"
+  )
+  wait_for_port 9007 30 && wait_for_port 9008 30 && echo "mq_auth:started" || {
+    echo "mq_auth:failed"
+    tail -n 100 "$log" || true
+    return 1
+  }
+}
+
 start_mode_router() {
   local dir="$ROOT/th/mode_router"
   local log="$ROOT/server_logs/th-mode-router.wyl-restart.log"
@@ -226,6 +259,19 @@ start_mode_router() {
   set_env_kv ACPS_DISCOVERY_V21_ENABLED "${ACPS_DISCOVERY_V21_ENABLED:-false}"
   set_env_kv ACPS_DISCOVERY_LEGACY_FALLBACK_ENABLED "${ACPS_DISCOVERY_LEGACY_FALLBACK_ENABLED:-true}"
   set_env_kv ORCHESTRATOR_DISCOVERY_URL "${ORCHESTRATOR_DISCOVERY_URL:-http://127.0.0.1:8005/acps-adp-v2/discover}"
+  set_env_kv ACPS_MQ_AUTH_ENABLED "${ACPS_MQ_AUTH_ENABLED:-false}"
+  set_env_kv ACPS_MQ_INBOX_ENABLED "${ACPS_MQ_INBOX_ENABLED:-false}"
+  set_env_kv ACPS_MQ_LEGACY_FALLBACK_ENABLED "${ACPS_MQ_LEGACY_FALLBACK_ENABLED:-true}"
+  set_env_kv ACPS_MQ_LEADER_AIC "${ACPS_MQ_LEADER_AIC:-1.2.156.3088.1.1.34C2.478BDF.3GF546.0JU4}"
+  set_env_kv ACPS_MQ_HOST "${ACPS_MQ_HOST:-127.0.0.1}"
+  set_env_kv ACPS_MQ_PORT "${ACPS_MQ_PORT:-5671}"
+  set_env_kv ACPS_MQ_VHOST "${ACPS_MQ_VHOST:-acps}"
+  set_env_kv ACPS_MQ_AUTH_URL "${ACPS_MQ_AUTH_URL:-https://127.0.0.1:9007}"
+  set_env_kv ACPS_MQ_TLS_CERT_FILE "${ACPS_MQ_TLS_CERT_FILE:-$ROOT/sds/mq-auth-server/certs/leader.pem}"
+  set_env_kv ACPS_MQ_TLS_KEY_FILE "${ACPS_MQ_TLS_KEY_FILE:-$ROOT/sds/mq-auth-server/certs/leader.key}"
+  set_env_kv ACPS_MQ_TLS_CA_FILE "${ACPS_MQ_TLS_CA_FILE:-$ROOT/sds/mq-auth-server/certs/acps-root-ca.pem}"
+  set_env_kv ACPS_MQ_TLS_CHECK_HOSTNAME "${ACPS_MQ_TLS_CHECK_HOSTNAME:-false}"
+  set_env_kv ACPS_MQ_INVITATION_TIMEOUT_SECONDS "${ACPS_MQ_INVITATION_TIMEOUT_SECONDS:-30}"
   if port_listening 18080; then
     echo "mode_router:already_listening"
     return 0
@@ -249,6 +295,22 @@ start_mode2_group_adapter() {
   local proxy_log="$ROOT/server_logs/th-mode2-group-proxy.log"
   mkdir -p "$ROOT/server_logs"
   touch "$bridge_dir/.env"
+  set_bridge_env_kv() {
+    local key="$1"
+    local value="$2"
+    if grep -q "^${key}=" "$bridge_dir/.env"; then
+      sed -i "s|^${key}=.*|${key}=${value}|" "$bridge_dir/.env"
+    else
+      printf '\n%s=%s\n' "$key" "$value" >> "$bridge_dir/.env"
+    fi
+  }
+  set_bridge_env_kv ACPS_MQ_INBOX_ENABLED "${ACPS_MQ_INBOX_ENABLED:-false}"
+  set_bridge_env_kv ACPS_MQ_HOST "${ACPS_MQ_HOST:-127.0.0.1}"
+  set_bridge_env_kv ACPS_MQ_PORT "${ACPS_MQ_PORT:-5671}"
+  set_bridge_env_kv ACPS_MQ_VHOST "${ACPS_MQ_VHOST:-acps}"
+  set_bridge_env_kv ACPS_MQ_PARTNER_CERT_DIR "${ACPS_MQ_PARTNER_CERT_DIR:-$ROOT/sds/mq-auth-server/certs/partners}"
+  set_bridge_env_kv ACPS_MQ_TLS_CA_FILE "${ACPS_MQ_TLS_CA_FILE:-$ROOT/sds/mq-auth-server/certs/acps-root-ca.pem}"
+  set_bridge_env_kv ACPS_MQ_TLS_CHECK_HOSTNAME "${ACPS_MQ_TLS_CHECK_HOSTNAME:-false}"
   if ! grep -q '^TRAVEL_GROUP_BRIDGE_FORCE_FALLBACK=' "$bridge_dir/.env" 2>/dev/null; then
     printf '\nTRAVEL_GROUP_BRIDGE_FORCE_FALLBACK=false\n' >> "$bridge_dir/.env"
   else
@@ -327,6 +389,7 @@ stop_legacy_registry
 start_challenge
 start_ca
 start_registry
+start_mq_auth
 start_discovery
 start_mode2_group_adapter
 start_mode_router
@@ -334,4 +397,4 @@ start_direct_rpc
 start_frontend
 
 echo "ports:"
-ss -ltnp 2>/dev/null | grep -E ':(8001|8003|8004|8005|18080|19090|8888)\b' || true
+ss -ltnp 2>/dev/null | grep -E ':(5671|5672|8001|8003|8004|8005|9007|9008|18080|19090|8888)\b' || true

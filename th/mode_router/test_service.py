@@ -396,7 +396,12 @@ class ServiceTests(unittest.TestCase):
                         }
                     ],
                 },
-                payload={"agent_poll_interval": 0.2, "agent_poll_timeout": 2, "agent_timeout": 5},
+                payload={
+                    "agent_poll_interval": 0.2,
+                    "agent_poll_timeout": 2,
+                    "agent_timeout": 5,
+                    "mode2_synthesis": False,
+                },
             )
         finally:
             agent_server.shutdown()
@@ -454,6 +459,72 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(response["decision"]["mode"], "mode_2")
         self.assertTrue(response["execution"]["group_chat"])
         self.assertEqual(response["final_result"], "group ok")
+
+    def test_stage6_plan_preserves_acs_for_mq_inbox_routing(self):
+        plan = {
+            "primary_agent": {"aic": "agent-v21", "name": "Agent"},
+            "work_packages": [{"agent": {"aic": "agent-v21", "name": "Agent"}}],
+        }
+        acs = {
+            "protocolVersion": "02.01",
+            "endPoints": [
+                {"url": "amqps://mq.example/acps?inbox=inbox_agent-v21", "transport": "AMQP"},
+                {"url": "https://agent.example/rpc", "transport": "JSONRPC"},
+            ],
+        }
+        enriched = service._enrich_plan_agent_endpoints(plan, [{"aic": "agent-v21", "acs": acs}])
+        self.assertEqual(enriched["primary_agent"]["acs"], acs)
+        self.assertEqual(enriched["work_packages"][0]["agent"]["acs"], acs)
+        self.assertEqual(enriched["work_packages"][0]["agent"]["url"], "https://agent.example/rpc")
+
+    def test_stage6_mq_inbox_failure_falls_back_to_http(self):
+        payload = {
+            "candidate_skills": [
+                {
+                    "aic": "agent-a",
+                    "agent_name": "Agent A",
+                    "skillid": "plan",
+                    "score": 0.95,
+                    "acs": {"endPoints": [{"url": "http://127.0.0.1:9/rpc", "transport": "JSONRPC"}]},
+                },
+                {
+                    "aic": "agent-b",
+                    "agent_name": "Agent B",
+                    "skillid": "build",
+                    "score": 0.93,
+                    "acs": {"endPoints": [{"url": "http://127.0.0.1:9/rpc", "transport": "JSONRPC"}]},
+                },
+            ],
+            "hints": {"requires_independent_roles": True},
+            "check_dispatch": False,
+            "execution_transport": "mq_inbox",
+            "route_scores": {"LLM": 0.0, "Agent": 0.2, service.ROUTE_MULTI_AGENT: 0.9},
+        }
+        fake_route = RouteClassification(
+            scores={"LLM": 0.0, "Agent": 0.2, service.ROUTE_MULTI_AGENT: 0.9},
+            label=service.ROUTE_MULTI_AGENT,
+            mode="mode_2",
+            next_step="orchestrator",
+            summary="multi-agent",
+            reasoning=["mocked"],
+            prompt_source="mock",
+            llm_used=False,
+            model="mock",
+            raw_response=None,
+        )
+        http_result = {"status": "done", "group_chat": False, "runs": [], "final_result": "fallback ok"}
+
+        with patch.object(service, "classify_task_route", return_value=fake_route):
+            with patch.object(service, "execute_plan_group_chat", side_effect=RuntimeError("mq unavailable")) as group_call:
+                with patch.object(service, "execute_plan_http_agents", return_value=http_result) as http_call:
+                    response = service._build_orchestrator_execute_response("coordinate a multi-agent build", payload)
+
+        group_call.assert_called_once()
+        self.assertTrue(group_call.call_args.kwargs["payload"]["mq_inbox"]["enabled"])
+        http_call.assert_called_once()
+        self.assertEqual(response["execution"]["fallback_from"], "mq_inbox")
+        self.assertEqual(response["execution"]["fallback_reason"], "mq unavailable")
+        self.assertEqual(response["final_result"], "fallback ok")
 
     def test_orchestrator_execute_agent_route_defaults_to_square_registry(self):
         calls = {"registry": 0, "discovery": 0}

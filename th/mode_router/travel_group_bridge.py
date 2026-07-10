@@ -14,6 +14,8 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from mq_v21_runtime import create_client_ssl_context, partner_tls_paths, truthy
+
 
 HERE = Path(__file__).resolve().parent
 WORKSPACE_ROOT = HERE.parent.parent
@@ -75,6 +77,7 @@ FORCE_FALLBACK = os.getenv("TRAVEL_GROUP_BRIDGE_FORCE_FALLBACK", "true").lower()
 
 app = FastAPI(title="travel-group-bridge", version="1.0.0")
 _clients: list[GroupPartnerMqClient] = []
+_v21_clients: list[Any] = []
 
 
 AGENT_FALLBACKS: dict[str, dict[str, Any]] = {
@@ -317,7 +320,62 @@ async def health() -> dict[str, Any]:
         "service": "travel-group-bridge",
         "agents": sorted(AGENT_TARGETS),
         "activeClients": len(_clients),
+        "mqInboxEnabled": truthy(os.getenv("ACPS_MQ_INBOX_ENABLED"), False),
+        "mqInboxConsumers": len(_v21_clients),
     }
+
+
+@app.on_event("startup")
+async def start_mq_inbox_consumers() -> None:
+    if not truthy(os.getenv("ACPS_MQ_INBOX_ENABLED"), False):
+        return
+
+    from acps_sdk.aip_v21 import GroupPartnerMqClient as V21GroupPartnerMqClient
+    from acps_sdk.aip_v21.aip_group_runtime import ensure_valid_aic
+
+    cert_dir = os.getenv("ACPS_MQ_PARTNER_CERT_DIR", "").strip()
+    ca_file = os.getenv("ACPS_MQ_TLS_CA_FILE", "").strip()
+    host = os.getenv("ACPS_MQ_HOST", "127.0.0.1").strip()
+    port = int(os.getenv("ACPS_MQ_PORT", "5671"))
+    vhost = os.getenv("ACPS_MQ_VHOST", "acps").strip()
+    check_hostname = truthy(os.getenv("ACPS_MQ_TLS_CHECK_HOSTNAME"), False)
+    if port != 5671 or vhost != "acps":
+        raise RuntimeError("MQ Inbox consumers require AMQPS port 5671 and vhost acps")
+
+    for agent_key, target in AGENT_TARGETS.items():
+        aic = str(target["aic"])
+        try:
+            ensure_valid_aic(aic)
+        except ValueError:
+            continue
+        cert_file, key_file = partner_tls_paths(cert_dir, aic)
+        ssl_context = create_client_ssl_context(
+            cert_file=cert_file,
+            key_file=key_file,
+            ca_file=ca_file,
+            check_hostname=check_hostname,
+        )
+        client = V21GroupPartnerMqClient(
+            partner_aic=aic,
+            rabbitmq_host=host,
+            rabbitmq_port=port,
+            rabbitmq_vhost=vhost,
+            rabbitmq_user=None,
+            rabbitmq_password=None,
+            ssl_context=ssl_context,
+        )
+        handler = _command_handler_for(agent_key)
+        handler.client = client
+        client.set_command_handler(handler)
+        await client.start_inbox_consuming(client.join_group_from_invitation)
+        _v21_clients.append(client)
+
+
+@app.on_event("shutdown")
+async def stop_mq_inbox_consumers() -> None:
+    while _v21_clients:
+        client = _v21_clients.pop()
+        await client.close()
 
 
 @app.post("/agents/{agent_key}/group/rpc")

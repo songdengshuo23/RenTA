@@ -1184,6 +1184,18 @@ def _endpoint_index_from_skills(skills: list[Mapping[str, Any]]) -> dict[str, st
     return endpoints
 
 
+def _acs_index_from_skills(skills: list[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    acs_by_aic: dict[str, dict[str, Any]] = {}
+    for skill in skills:
+        if not isinstance(skill, Mapping):
+            continue
+        aic = str(skill.get("aic") or skill.get("agent_id") or "").strip()
+        acs = skill.get("acs") or skill.get("acp") or skill.get("parent_agent") or {}
+        if aic and aic not in acs_by_aic and isinstance(acs, Mapping):
+            acs_by_aic[aic] = dict(acs)
+    return acs_by_aic
+
+
 def _agent_url_from_mapping(agent: Mapping[str, Any]) -> str:
     endpoint = str(agent.get("url") or agent.get("endpoint") or "").strip()
     if endpoint:
@@ -1193,7 +1205,8 @@ def _agent_url_from_mapping(agent: Mapping[str, Any]) -> str:
 
 def _enrich_plan_agent_endpoints(plan: dict[str, Any], skills: list[Mapping[str, Any]]) -> dict[str, Any]:
     endpoint_by_aic = _endpoint_index_from_skills(skills)
-    if not endpoint_by_aic:
+    acs_by_aic = _acs_index_from_skills(skills)
+    if not endpoint_by_aic and not acs_by_aic:
         return plan
 
     agents: list[dict[str, Any]] = []
@@ -1211,6 +1224,8 @@ def _enrich_plan_agent_endpoints(plan: dict[str, Any], skills: list[Mapping[str,
         aic = str(agent.get("aic") or "").strip()
         if aic and not _agent_url_from_mapping(agent) and endpoint_by_aic.get(aic):
             agent["url"] = endpoint_by_aic[aic]
+        if aic and "acs" not in agent and acs_by_aic.get(aic):
+            agent["acs"] = dict(acs_by_aic[aic])
     return plan
 
 
@@ -2889,16 +2904,44 @@ def _build_orchestrator_execute_response(task: str, payload: Mapping[str, Any]) 
     elif decision.mode == "mode_1":
         execution = execute_plan_single_agent(normalized["task"], plan, payload=payload)
     elif decision.mode == "mode_2":
+        default_execution_transport = (
+            "mq_inbox"
+            if _truthy(os.getenv("ACPS_MQ_INBOX_ENABLED"), False)
+            else (os.getenv("MODE2_EXECUTION_TRANSPORT") or "rabbitmq_group_chat")
+        )
         execution_transport = str(
             payload.get("execution_transport")
             or payload.get("executionTransport")
             or payload.get("mode2_execution_transport")
             or payload.get("mode2ExecutionTransport")
-            or os.getenv("MODE2_EXECUTION_TRANSPORT")
-            or "rabbitmq_group_chat"
+            or default_execution_transport
         ).strip().lower()
         if execution_transport in {"http", "http_jsonrpc", "jsonrpc", "direct_http"}:
             execution = execute_plan_http_agents(normalized["task"], plan, payload=payload)
+        elif execution_transport in {"mq", "amqp", "amqps", "mq_inbox", "inbox"}:
+            mq_payload = dict(payload)
+            mq_config = mq_payload.get("mq_inbox") or mq_payload.get("mqInbox") or {}
+            mq_config = dict(mq_config) if isinstance(mq_config, Mapping) else {}
+            mq_config["enabled"] = True
+            mq_payload["mq_inbox"] = mq_config
+            try:
+                execution = execute_plan_group_chat(normalized["task"], plan, payload=mq_payload)
+            except Exception as exc:
+                fallback_enabled = _truthy(
+                    payload.get(
+                        "mq_legacy_fallback_enabled",
+                        payload.get(
+                            "mqLegacyFallbackEnabled",
+                            os.getenv("ACPS_MQ_LEGACY_FALLBACK_ENABLED", "true"),
+                        ),
+                    ),
+                    True,
+                )
+                if not fallback_enabled:
+                    raise
+                execution = execute_plan_http_agents(normalized["task"], plan, payload=payload)
+                execution["fallback_from"] = "mq_inbox"
+                execution["fallback_reason"] = str(exc)
         else:
             execution = execute_plan_group_chat(normalized["task"], plan, payload=payload)
     else:

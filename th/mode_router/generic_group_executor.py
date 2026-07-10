@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Mapping
 from uuid import uuid4
 
+from mq_v21_runtime import MQV21Settings
+
 HERE = Path(__file__).resolve().parent
 WORKSPACE_ROOT = HERE.parent.parent
 SDK_PATH = WORKSPACE_ROOT / "ACPs_update_code" / "ACPs-SDK"
@@ -180,6 +182,28 @@ def _agent_url(package: Mapping[str, Any]) -> str:
     return str(agent.get("url") or agent.get("endpoint") or "").strip()
 
 
+def _agent_acs(package: Mapping[str, Any]) -> dict[str, Any]:
+    agent = package.get("agent") if isinstance(package.get("agent"), Mapping) else {}
+    acs = agent.get("acs") or agent.get("acp") or package.get("acs") or package.get("acp") or {}
+    return dict(acs) if isinstance(acs, Mapping) else {}
+
+
+def _agent_amqp_url(package: Mapping[str, Any]) -> str:
+    acs = _agent_acs(package)
+    endpoints = acs.get("endPoints") or acs.get("endpoints") or []
+    if not isinstance(endpoints, list):
+        return ""
+    for endpoint in endpoints:
+        if not isinstance(endpoint, Mapping):
+            continue
+        if str(endpoint.get("transport") or "").strip().upper() != "AMQP":
+            continue
+        url = str(endpoint.get("url") or endpoint.get("href") or "").strip()
+        if url:
+            return url
+    return ""
+
+
 def _package_id(package: Mapping[str, Any]) -> str:
     return str(package.get("package_id") or package.get("id") or uuid4().hex[:8])
 
@@ -240,9 +264,15 @@ async def execute_plan_group_chat_async(
     if str(SDK_PATH) not in sys.path:
         sys.path.insert(0, str(SDK_PATH))
 
-    from acps_sdk.aip import ACSObject, GroupLeader, TaskState
-
     config = GroupExecutionConfig.from_payload(payload)
+    mq_v21 = MQV21Settings.from_payload(payload)
+    if mq_v21.enabled:
+        mq_v21.validate()
+        from acps_sdk.aip_v21 import ACSObject, GroupLeader, TaskState
+    else:
+        from acps_sdk.aip import ACSObject, GroupLeader, TaskState
+    active_leader_aic = mq_v21.leader_aic if mq_v21.enabled else config.leader_aic
+
     packages = [package for package in list(plan.get("work_packages") or []) if isinstance(package, Mapping)]
     if plan.get("mode") != "mode_2":
         return {
@@ -262,7 +292,7 @@ async def execute_plan_group_chat_async(
     missing_endpoints = [
         {"package_id": _package_id(package), "aic": _agent_aic(package), "name": _agent_name(package)}
         for package in packages
-        if not _agent_url(package)
+        if not _agent_url(package) and not (mq_v21.enabled and _agent_amqp_url(package))
     ]
     if missing_endpoints:
         raise ValueError(f"cannot execute group chat because agent endpoint URL is missing: {missing_endpoints}")
@@ -273,7 +303,16 @@ async def execute_plan_group_chat_async(
     traffic_enabled = _traffic_enabled(payload)
     if traffic_enabled and _traffic_reset_on_start(payload) and reset_traffic is not None:
         reset_traffic()
-    leader = GroupLeader(leader_aic=config.leader_aic, rabbitmq_config=config.rabbitmq_dict())
+    if mq_v21.enabled:
+        leader = GroupLeader(
+            leader_aic=active_leader_aic,
+            rabbitmq_config=mq_v21.rabbitmq_config(),
+            ssl_context=mq_v21.create_ssl_context(),
+            ssl_cert=(mq_v21.cert_file, mq_v21.key_file),
+            invitation_timeout_seconds=mq_v21.invitation_timeout_seconds,
+        )
+    else:
+        leader = GroupLeader(leader_aic=active_leader_aic, rabbitmq_config=config.rabbitmq_dict())
     group_session = await leader.create_group_session(session_id=session_id, initial_partners=[])
 
     invited: list[dict[str, Any]] = []
@@ -286,7 +325,7 @@ async def execute_plan_group_chat_async(
         group_rpc_url = _to_group_rpc_url(_agent_url(package))
         invite_tokens = _record_payload_traffic(
             enabled=traffic_enabled,
-            source=config.leader_aic,
+            source=active_leader_aic,
             target=aic,
             payload={"session_id": session_id, "partner_aic": aic, "partner_rpc_url": group_rpc_url},
             edge_type="partner_invite",
@@ -294,17 +333,28 @@ async def execute_plan_group_chat_async(
             execution_id=execution_id,
             package_id=_package_id(package),
         )
-        await leader.invite_partner(
-            session_id=session_id,
-            partner_acs=ACSObject(aic=aic),
-            partner_rpc_url=group_rpc_url,
-        )
+        if mq_v21.enabled:
+            await leader.invite_partner(
+                session_id=session_id,
+                partner_acs=ACSObject(aic=aic),
+                partner_rpc_url=group_rpc_url or None,
+                partner_acs_data=_agent_acs(package),
+            )
+            invitation_route = group_session.invitation_routes.get(aic, "")
+        else:
+            await leader.invite_partner(
+                session_id=session_id,
+                partner_acs=ACSObject(aic=aic),
+                partner_rpc_url=group_rpc_url,
+            )
+            invitation_route = "rpc"
         invited.append(
             {
                 "aic": aic,
                 "name": _agent_name(package),
                 "rpc_url": _agent_url(package),
                 "group_rpc_url": group_rpc_url,
+                "invitation_route": invitation_route,
                 "traffic_invite_tokens": invite_tokens,
             }
         )
@@ -333,7 +383,7 @@ async def execute_plan_group_chat_async(
         started = time.perf_counter()
         dispatch_tokens = _record_payload_traffic(
             enabled=traffic_enabled,
-            source=config.leader_aic,
+            source=active_leader_aic,
             target=aic,
             payload={"session_id": session_id, "task_id": task_id, "text_content": prompt, "mentions": [aic]},
             edge_type="task_dispatch",
@@ -394,7 +444,7 @@ async def execute_plan_group_chat_async(
         response_tokens = _record_payload_traffic(
             enabled=traffic_enabled,
             source=aic,
-            target=config.leader_aic,
+            target=active_leader_aic,
             payload={"task_id": task_id, "state": final_state, "output_text": output_text},
             edge_type="agent_result",
             session_id=session_id,
@@ -407,7 +457,7 @@ async def execute_plan_group_chat_async(
         if observed and observed.get("state") == getattr(TaskState, "AwaitingCompletion", None):
             _record_payload_traffic(
                 enabled=traffic_enabled,
-                source=config.leader_aic,
+                source=active_leader_aic,
                 target=aic,
                 payload={"task_id": task_id, "session_id": session_id, "command": "complete_task"},
                 edge_type="task_completion_ack",
@@ -451,7 +501,7 @@ async def execute_plan_group_chat_async(
     )
     final_result_tokens = _record_payload_traffic(
         enabled=traffic_enabled,
-        source=config.leader_aic,
+        source=active_leader_aic,
         target="client",
         payload={"execution_id": execution_id, "session_id": session_id, "final_result": final_result},
         edge_type="final_result",
@@ -468,7 +518,7 @@ async def execute_plan_group_chat_async(
             "traffic_tokens": final_result_tokens,
         }
     )
-    return {
+    result = {
         "execution_id": execution_id,
         "plan_id": plan.get("plan_id"),
         "status": "done" if len(runs) == len(packages) else "partial",
@@ -476,8 +526,9 @@ async def execute_plan_group_chat_async(
         "strategy": plan.get("strategy"),
         "dry_run": False,
         "group_chat": True,
+        "execution_transport": "mq_inbox" if mq_v21.enabled else "rabbitmq_group_chat",
         "session_id": session_id,
-        "leader_aic": config.leader_aic,
+        "leader_aic": active_leader_aic,
         "invited_agents": invited,
         "runs": runs,
         "events": events,
@@ -485,6 +536,9 @@ async def execute_plan_group_chat_async(
         "final_result": final_result,
         "next_requirement": "",
     }
+    if mq_v21.enabled:
+        await leader.close()
+    return result
 
 
 def execute_plan_group_chat(

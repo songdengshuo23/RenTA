@@ -1,0 +1,9 @@
+[
+ {rabbitmq_auth_backend_http,
+  [{ssl_options,
+    [{cacertfile, "/etc/rabbitmq/stage6-certs/acps-root-ca.pem"},
+     {certfile, "/etc/rabbitmq/stage6-certs/rabbitmq-client.pem"},
+     {keyfile, "/etc/rabbitmq/stage6-certs/rabbitmq-client.key"},
+     {verify, verify_peer},
+     {server_name_indication, "localhost"}]}]}
+].
