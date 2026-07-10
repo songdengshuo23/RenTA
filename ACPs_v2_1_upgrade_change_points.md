@@ -106,7 +106,9 @@ Gateway：/home/johnteller/team_ws/wyl/server/server.py
 Discovery/Partners：/home/johnteller/team_ws/yhl
 ```
 
-远端当前只看到 RabbitMQ `5672` 在监听；平台主体服务未启动。整理过程没有启动或停止平台服务，只做目录归档和软链接视图创建。
+2026-07-10 已完成阶段 0 基线验证。平台已通过原 `wyl/start_stack.sh` 完整启动，`8001`、`8003`、`8004`、`8098`、`8099`、`18080`、`19090`、`8888` 均正常监听，RabbitMQ `5672` 和本机 PostgreSQL `5432` 正常。阶段 0 没有修改业务代码、数据库结构或原有接口。
+
+阶段 0 已新增只读 HTTP 冒烟脚本和隔离测试数据库的一键回归脚本，并完成 Registry、CA、Challenge、Mode Router 的测试基线记录。完整结果、数据行数、已知测试失败和升级前数据快照位置见 `STAGE0_BASELINE.md`。
 
 ### 四、首个可交付版本范围
 
