@@ -4,6 +4,45 @@
 
 本次升级目标不是“用新版 ACPs-community 直接替换现有平台代码”，而是在**保持现有平台功能、入口、接口、数据和编排流程不受影响**的基础上，把 ACPs-community v2.1.0 的协议能力逐步移植进现有系统。
 
+### 一、升级总策略
+
+| 策略 | 说明 |
+|---|---|
+| 保留主线功能 | 现有前端、Registry 自定义能力、积分、事件、Passport、Supervisor、Mode Router、旧 `/api` 全部保留 |
+| 协议模块增量移植 | 只把新版 AIC、ACS、EAB、CA 发证、Discovery、MQ Inbox 等协议能力分阶段移植 |
+| 新旧协议双轨兼容 | 旧 Agent / 旧 AIC / 旧 ACS / 旧证书继续可读可用，新注册 Agent 默认走 v2.1 |
+| 外部接口不破坏 | `10.126.126.8:8888`、前端路由、旧 `/api`、已有网关路径保持不变 |
+| 可灰度、可回滚 | 每个新能力都通过环境变量开关控制，异常时可以切回旧链路 |
+| 先旁路验证再切主链路 | 新协议能力先影子计算/旁路校验，通过后再对新数据启用 |
+
+### 二、分阶段实施计划
+
+| 阶段 | 目标 | 主要修改 | 不影响原功能的措施 | 交付结果 |
+|---|---|---|---|---|
+| 阶段 0：基线冻结与回归清单 | 固定当前平台状态 | 记录当前前端页面、API、数据库表、启动脚本、端口、核心流程 | 不改代码，只做盘点 | 当前功能基线、回归测试清单 |
+| 阶段 1：AIC/ACS 兼容升级 | 支持 AIC v02.01、ACS v02.01 | 升级 `aic.py`、`acsSchema.json`、Agent 申请/审批逻辑 | 旧 AIC v02.00 保留 legacy validator，新 Agent 才生成 v02.01 | 新旧 AIC/ACS 双轨可用 |
+| 阶段 2：Registry 协议能力移植 | 引入新版 Registry 的 EAB/verification/服务拆分能力 | 增加 `app/eab`、必要 migration、EAB API；整理 agent service | 不覆盖 `points/events/Passport/Supervisor`，旧 `/api` 继续可用 | Registry 支持 EAB，但平台业务功能不丢 |
+| 阶段 3：CA 发证链路升级 | 从 HTTP-01 Challenge 切到 EAB | 引入 `eab_verifier.py`、`registry_client.py`，修改 ACME `new-account/new-order/finalize` | Challenge Server 保留 legacy，旧证书继续可用，新证书走 EAB | 新版 EAB 发证链路可用 |
+| 阶段 4：前端与网关兼容适配 | 前端支持新版字段但不破坏旧页面 | Agent 申请页支持 ACS 02.01、certificate、AMQP endpoint；网关新增 EAB/CA 分流 | 旧页面、旧接口、旧字段继续兼容；`/api` 不改成强制 `/api/v1` | 前端可申请新版 Agent |
+| 阶段 5：Discovery 适配 | 引入新版 Discovery 查询能力 | 接入 `/acps-adp-v2/discover`，Registry DSP 同步适配 | Mode Router 保留旧 `passports/discovery` fallback | Discovery 优先、Registry fallback |
+| 阶段 6：MQ Inbox / mTLS 增强 | 支持新版 AIP 群组通信 | 引入 mq-auth-server、AMQPS、Inbox endpoint、SDK 调用适配 | Direct RPC / HTTP 调度不删除，失败自动 fallback | 新版 MQ Inbox 可灰度使用 |
+| 阶段 7：全量回归与灰度上线 | 确认升级不影响既有功能 | 跑页面、API、数据、发证、编排、积分、事件回归 | 发现问题关闭对应开关回滚 | 可上线版本与回滚方案 |
+
+### 三、推荐实施顺序
+
+```text
+1. 以远端 /home/johnteller/team_ws 为升级主线，先冻结当前目录结构和启动路径
+2. 保留 sds/th/wyl/yhl/ACPs_update_code/cyf/server_logs 原路径，不做破坏性重命名
+3. 在远端真实代码上增加兼容开关和回归测试脚本
+4. 优先升级 AIC v02.01 与 ACS v02.01
+5. 移植 Registry EAB 模块，但保留旧 /api 与 points/events/Passport/Supervisor 等平台扩展
+6. 改造 CA EAB 发证链路，Challenge Server 转 legacy fallback
+7. 适配前端申请页和 wyl/server.py 网关分流
+8. 接入 Discovery v2.1，但保留 yhl/Registry discovery fallback
+9. 最后接入 MQ Inbox/mTLS，保留 Direct RPC/HTTP fallback
+10. 全量回归通过后，只对新注册 Agent 默认启用 v2.1
+```
+
 ### 远端已联通后的实际基线与整理结果
 
 结论：**后续升级以远端 `/home/johnteller/team_ws` 实际代码为主线；提交包解压代码只作为历史提交参考和差异对照。**
@@ -68,45 +107,6 @@ Discovery/Partners：/home/johnteller/team_ws/yhl
 ```
 
 远端当前只看到 RabbitMQ `5672` 在监听；平台主体服务未启动。整理过程没有启动或停止平台服务，只做目录归档和软链接视图创建。
-
-### 一、升级总策略
-
-| 策略 | 说明 |
-|---|---|
-| 保留主线功能 | 现有前端、Registry 自定义能力、积分、事件、Passport、Supervisor、Mode Router、旧 `/api` 全部保留 |
-| 协议模块增量移植 | 只把新版 AIC、ACS、EAB、CA 发证、Discovery、MQ Inbox 等协议能力分阶段移植 |
-| 新旧协议双轨兼容 | 旧 Agent / 旧 AIC / 旧 ACS / 旧证书继续可读可用，新注册 Agent 默认走 v2.1 |
-| 外部接口不破坏 | `10.126.126.8:8888`、前端路由、旧 `/api`、已有网关路径保持不变 |
-| 可灰度、可回滚 | 每个新能力都通过环境变量开关控制，异常时可以切回旧链路 |
-| 先旁路验证再切主链路 | 新协议能力先影子计算/旁路校验，通过后再对新数据启用 |
-
-### 二、分阶段实施计划
-
-| 阶段 | 目标 | 主要修改 | 不影响原功能的措施 | 交付结果 |
-|---|---|---|---|---|
-| 阶段 0：基线冻结与回归清单 | 固定当前平台状态 | 记录当前前端页面、API、数据库表、启动脚本、端口、核心流程 | 不改代码，只做盘点 | 当前功能基线、回归测试清单 |
-| 阶段 1：AIC/ACS 兼容升级 | 支持 AIC v02.01、ACS v02.01 | 升级 `aic.py`、`acsSchema.json`、Agent 申请/审批逻辑 | 旧 AIC v02.00 保留 legacy validator，新 Agent 才生成 v02.01 | 新旧 AIC/ACS 双轨可用 |
-| 阶段 2：Registry 协议能力移植 | 引入新版 Registry 的 EAB/verification/服务拆分能力 | 增加 `app/eab`、必要 migration、EAB API；整理 agent service | 不覆盖 `points/events/Passport/Supervisor`，旧 `/api` 继续可用 | Registry 支持 EAB，但平台业务功能不丢 |
-| 阶段 3：CA 发证链路升级 | 从 HTTP-01 Challenge 切到 EAB | 引入 `eab_verifier.py`、`registry_client.py`，修改 ACME `new-account/new-order/finalize` | Challenge Server 保留 legacy，旧证书继续可用，新证书走 EAB | 新版 EAB 发证链路可用 |
-| 阶段 4：前端与网关兼容适配 | 前端支持新版字段但不破坏旧页面 | Agent 申请页支持 ACS 02.01、certificate、AMQP endpoint；网关新增 EAB/CA 分流 | 旧页面、旧接口、旧字段继续兼容；`/api` 不改成强制 `/api/v1` | 前端可申请新版 Agent |
-| 阶段 5：Discovery 适配 | 引入新版 Discovery 查询能力 | 接入 `/acps-adp-v2/discover`，Registry DSP 同步适配 | Mode Router 保留旧 `passports/discovery` fallback | Discovery 优先、Registry fallback |
-| 阶段 6：MQ Inbox / mTLS 增强 | 支持新版 AIP 群组通信 | 引入 mq-auth-server、AMQPS、Inbox endpoint、SDK 调用适配 | Direct RPC / HTTP 调度不删除，失败自动 fallback | 新版 MQ Inbox 可灰度使用 |
-| 阶段 7：全量回归与灰度上线 | 确认升级不影响既有功能 | 跑页面、API、数据、发证、编排、积分、事件回归 | 发现问题关闭对应开关回滚 | 可上线版本与回滚方案 |
-
-### 三、推荐实施顺序
-
-```text
-1. 以远端 /home/johnteller/team_ws 为升级主线，先冻结当前目录结构和启动路径
-2. 保留 sds/th/wyl/yhl/ACPs_update_code/cyf/server_logs 原路径，不做破坏性重命名
-3. 在远端真实代码上增加兼容开关和回归测试脚本
-4. 优先升级 AIC v02.01 与 ACS v02.01
-5. 移植 Registry EAB 模块，但保留旧 /api 与 points/events/Passport/Supervisor 等平台扩展
-6. 改造 CA EAB 发证链路，Challenge Server 转 legacy fallback
-7. 适配前端申请页和 wyl/server.py 网关分流
-8. 接入 Discovery v2.1，但保留 yhl/Registry discovery fallback
-9. 最后接入 MQ Inbox/mTLS，保留 Direct RPC/HTTP fallback
-10. 全量回归通过后，只对新注册 Agent 默认启用 v2.1
-```
 
 ### 四、首个可交付版本范围
 
