@@ -22,6 +22,10 @@ from app.sync.api import router as sync_router
 from app.events.hub import router as events_router
 from app.points.api import router as points_router
 
+if settings.ACPS_EAB_ISSUANCE_ENABLED:
+    from app.eab.api import router_atr as eab_router_atr
+    from app.eab.api import router_internal as eab_router_internal
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -91,6 +95,9 @@ app.include_router(agent_router_staff, prefix=settings.API_V1_STR)
 app.include_router(
     agent_router_atr, prefix=settings.ATR_BASE_PATH
 )  # ATR 路由，使用 ATR_BASE_PATH 配置
+if settings.ACPS_EAB_ISSUANCE_ENABLED:
+    app.include_router(eab_router_atr, prefix=settings.ATR_BASE_PATH)
+    app.include_router(eab_router_internal)
 app.include_router(file_router, prefix=settings.API_V1_STR)
 app.include_router(sync_router, prefix=settings.DSP_BASE_PATH, tags=["数据同步协议"])
 app.include_router(events_router, prefix=settings.API_V1_STR)

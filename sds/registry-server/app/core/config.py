@@ -114,6 +114,15 @@ class Settings(BaseSettings):
     ACPS_AIC_DUAL_READ_ENABLED: bool = os.getenv(
         "ACPS_AIC_DUAL_READ_ENABLED", "true"
     ).lower() in ("true", "1", "yes")
+    ACPS_EAB_ISSUANCE_ENABLED: bool = os.getenv(
+        "ACPS_EAB_ISSUANCE_ENABLED", "false"
+    ).lower() in ("true", "1", "yes")
+
+    # EAB credentials are encrypted at rest and expire after a short window.
+    SM4_ENCRYPTION_KEY: str = os.getenv("SM4_ENCRYPTION_KEY", "")
+    EAB_CREDENTIAL_EXPIRE_HOURS: int = int(
+        os.getenv("EAB_CREDENTIAL_EXPIRE_HOURS", "24")
+    )
 
     AIC_CRC_SALT: str = os.getenv("AIC_CRC_SALT", "0x0000ABCD")
 

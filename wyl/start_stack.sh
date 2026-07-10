@@ -45,6 +45,7 @@ start_registry() {
     export ACPS_V21_ENABLED="false"
     export ACPS_LEGACY_API_ENABLED="true"
     export ACPS_AIC_DUAL_READ_ENABLED="true"
+    export ACPS_EAB_ISSUANCE_ENABLED="false"
     export PYTHONPATH="$dir:$dir/.py312deps:$dir/.venv/lib/python3.13/site-packages"
     nohup python3 -u main.py > "$log" 2>&1 &
     echo $! > "$dir/logs/server.wyl-restart.pid"

@@ -17,6 +17,7 @@ if config.config_file_name is not None:
 from app.agent import model
 from app.account import model
 from app.sync import model
+from app.eab import model as eab_model
 from sqlmodel import SQLModel
 
 target_metadata = SQLModel.metadata
