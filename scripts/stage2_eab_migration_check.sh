@@ -5,7 +5,7 @@ set -euo pipefail
 : "${STAGE2_TEST_PSQL_URL:?set STAGE2_TEST_PSQL_URL}"
 : "${STAGE2_ARTIFACT_DIR:?set STAGE2_ARTIFACT_DIR}"
 
-if [[ "$STAGE2_TEST_DATABASE_URL" == *"/registry_db" ]]; then
+if [[ "$STAGE2_TEST_DATABASE_URL" =~ /registry_db($|\?) ]]; then
   echo "stage2 migration check refuses to run against registry_db" >&2
   exit 2
 fi
@@ -74,5 +74,7 @@ SELECT 'points_transaction=' || count(*) FROM points_transaction;
 SELECT 'eab_credential=' || count(*) FROM eab_credential;
 " | tee "$STAGE2_ARTIFACT_DIR/final.log"
 
-sha256sum "$STAGE2_ARTIFACT_DIR"/* > "$STAGE2_ARTIFACT_DIR/SHA256SUMS"
+find "$STAGE2_ARTIFACT_DIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+  | sort -z \
+  | xargs -0 sha256sum > "$STAGE2_ARTIFACT_DIR/SHA256SUMS"
 echo "stage2 isolated migration check passed"
