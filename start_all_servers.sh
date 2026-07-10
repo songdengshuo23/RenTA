@@ -105,7 +105,7 @@ start_docker_compose_stack() {
     fi
   ) >>"$LOG_ROOT/sds-compose.log" 2>&1 || warn "SDS docker compose up failed; see $LOG_ROOT/sds-compose.log"
 
-  for container in sds-registry-passport-source cb-orchestrator-rabbitmq my_registry_db; do
+  for container in sds-registry-passport-source cb-orchestrator-rabbitmq; do
     if docker container inspect "$container" >/dev/null 2>&1; then
       local state
       state="$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || echo false)"
@@ -117,15 +117,6 @@ start_docker_compose_stack() {
       fi
     fi
   done
-}
-
-start_cyf_registry() {
-  start_detached \
-    "CYF Legacy ACPs Registry Server" \
-    18001 \
-    "$ROOT/cyf/ACPs-Registry-Server" \
-    "$LOG_ROOT/cyf-registry.log" \
-    'PYTHONPATH="$PWD" ./venv/bin/python main.py'
 }
 
 start_yhl_discovery() {
@@ -252,7 +243,6 @@ EOF
   service_row "SDS CA Server" 8003 "http://10.126.126.8:8003/" "http://127.0.0.1:8003/health" "sds/docker-compose.yml: ca-server"
   service_row "SDS Challenge Server" 8004 "http://10.126.126.8:8004/" "http://127.0.0.1:8004/" "sds/docker-compose.yml: challenge-server"
   service_row "SDS Postgres" 5432 "postgres://10.126.126.8:5432" "" "sds/docker-compose.yml: postgres"
-  service_row "CYF Legacy ACPs Registry Server" 18001 "http://10.126.126.8:18001/" "http://127.0.0.1:18001/" "cyf/ACPs-Registry-Server/main.py"
   service_row "YHL Agent Discovery Server" 8005 "http://10.126.126.8:8005/" "http://127.0.0.1:8005/" "yhl/ACPs-Discovery-Server/main.py"
   service_row "Literature Search Agent" 8021 "http://10.126.126.8:8021/agents/literature_search/rpc" "http://127.0.0.1:8021/health" "yhl/partner-literature-search/main.py"
   service_row "Literature Analysis Agent" 8022 "http://10.126.126.8:8022/agents/literature_analysis/rpc" "http://127.0.0.1:8022/health" "yhl/partner-literature-analysis/main.py"
@@ -261,7 +251,6 @@ EOF
   service_row "TH Mode Router" 18080 "http://10.126.126.8:18080/" "http://127.0.0.1:18080/health" "th/mode_router/start_service.sh"
   service_row "RabbitMQ AMQP" 5672 "amqp://10.126.126.8:5672" "" "existing docker container: cb-orchestrator-rabbitmq"
   service_row "RabbitMQ Management" 15672 "http://10.126.126.8:15672/" "http://127.0.0.1:15672/" "existing docker container: cb-orchestrator-rabbitmq"
-  service_row "Legacy Registry Postgres" 5433 "postgres://10.126.126.8:5433" "" "existing docker container: my_registry_db"
 
   {
     echo
@@ -276,7 +265,7 @@ EOF
     echo
     echo "## Notes"
     echo
-    echo "- Duplicate source snapshots under ACPs_update_code are not started separately because their ports overlap with the active canonical services."
+    echo "- Obsolete Registry/CA/Challenge/Client/Discovery snapshots were removed from ACPs_update_code; ACPs-SDK is retained because the active orchestrator still imports it."
     echo "- Literature partner agents use yhl/agent_base.py when present; if only __pycache__ is available, this script restores yhl/agent_base.pyc for sourceless import."
     echo "- Leader Server is currently running, but leader_server.py is missing on disk; if port 8030 is stopped, cold-start is not possible until that source file is restored."
   } >>"$INVENTORY"
@@ -285,7 +274,6 @@ EOF
 main() {
   log "Using ROOT=$ROOT"
   start_docker_compose_stack
-  start_cyf_registry
   start_yhl_discovery
   start_literature_agent "Literature Search Agent" 8021 "$ROOT/yhl/partner-literature-search" "aip-auto-agent-wwx_search"
   start_literature_agent "Literature Analysis Agent" 8022 "$ROOT/yhl/partner-literature-analysis" "aip-auto-agent-wwx_analysis"

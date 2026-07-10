@@ -6,7 +6,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from route_classifier import ROUTE_AGENT, ROUTE_LLM, ROUTE_MULTI_AGENT, classify_task_route
+from route_classifier import (
+    ROUTE_AGENT,
+    ROUTE_LLM,
+    ROUTE_MULTI_AGENT,
+    RouteClassifierError,
+    classify_task_route,
+)
 
 
 NO_LLM_ENV = {
@@ -45,6 +51,20 @@ class RouteClassifierTests(unittest.TestCase):
             )
         self.assertEqual(result.label, ROUTE_MULTI_AGENT)
         self.assertEqual(result.mode, "mode_2")
+
+    def test_route_llm_failure_uses_local_rule_fallback(self):
+        with patch(
+            "route_classifier._call_route_llm",
+            side_effect=RouteClassifierError("read operation timed out"),
+        ):
+            result = classify_task_route(
+                "Use multiple specialist agents to audit backend services and security."
+            )
+
+        self.assertEqual(result.label, ROUTE_MULTI_AGENT)
+        self.assertEqual(result.mode, "mode_2")
+        self.assertFalse(result.llm_used)
+        self.assertIn("Route LLM unavailable", " ".join(result.reasoning))
 
     def test_route_scores_override(self):
         result = classify_task_route(

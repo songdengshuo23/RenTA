@@ -72,7 +72,12 @@ def classify_task_route(
     if override_scores:
         return _build_classification(override_scores, prompt_path, llm_used=False, model="override", raw_response=None)
 
-    llm_result = _call_route_llm(task, prompt_text, payload)
+    fallback_reasons: list[str] = []
+    try:
+        llm_result = _call_route_llm(task, prompt_text, payload)
+    except RouteClassifierError:
+        llm_result = None
+        fallback_reasons.append("Route LLM unavailable; local rule fallback used.")
     if llm_result is not None:
         scores, raw_response, model = llm_result
         return _build_classification(scores, prompt_path, llm_used=True, model=model, raw_response=raw_response)
@@ -82,7 +87,7 @@ def classify_task_route(
     return RouteClassification(
         **{
             **classification.to_dict(),
-            "reasoning": classification.reasoning + reasons,
+            "reasoning": classification.reasoning + reasons + fallback_reasons,
         }
     )
 

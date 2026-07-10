@@ -32,7 +32,7 @@
 
 ```text
 1. 以远端 /home/johnteller/team_ws 为升级主线，先冻结当前目录结构和启动路径
-2. 保留 sds/th/wyl/yhl/ACPs_update_code/cyf/server_logs 原路径，不做破坏性重命名
+2. 保留 `sds`、`th`、`wyl`、`yhl`、`ACPs_update_code/ACPs-SDK`、`server_logs` 的活动路径；经运行态审计确认无引用后删除重复快照
 3. 在远端真实代码上增加兼容开关和回归测试脚本
 4. 优先升级 AIC v02.01 与 ACS v02.01
 5. 移植 Registry EAB 模块，但保留旧 /api 与 points/events/Passport/Supervisor 等平台扩展
@@ -112,7 +112,7 @@ alembic_version=d4e5f6a7b8c9
 
 结论：**后续升级以远端 `/home/johnteller/team_ws` 实际代码为主线；提交包解压代码只作为历史提交参考和差异对照。**
 
-远端已按“不影响原有功能”的原则做了轻量整理：没有改名或移动任何启动脚本依赖的活跃目录，只把未被启动路径引用的备份/临时目录移入可回滚归档，并新增一个语义化软链接视图。
+远端已按“不影响原有功能”的原则完成两轮整理：没有改名或移动任何活动目录；第一轮把备份/临时目录移入可回滚归档并增加语义化软链接视图；第二轮依据进程工作目录、监听端口、启动脚本、源码引用、systemd、cron 和 Docker 使用情况，直接删除确认未使用的重复服务快照和镜像分片。
 
 | 项 | 当前处理结果 |
 |---|---|
@@ -121,7 +121,8 @@ alembic_version=d4e5f6a7b8c9
 | 项目结构说明 | `/home/johnteller/team_ws/PROJECT_LAYOUT.md` |
 | 归档目录 | `/home/johnteller/team_ws/_archive/pre_upgrade_cleanup_20260708_194323` |
 | 已归档内容 | `backups`、`port_swap_backups`、`th_backups`、`tmp_agent_profiles`、`ztl` |
-| 保留原因 | 启动路径、日志路径、依赖路径和历史兼容路径保持不变，避免影响原功能 |
+| 2026-07-10 直接删除 | `cyf`、`sds/image-parts`、`ACPs_update_code` 下除 `ACPs-SDK` 外的旧服务快照、`wyl/frontend_backups`、模块内备份文件、失效测试虚拟环境，以及前端依赖图不可达的 25 个旧 Vite 哈希产物 |
+| 保留原因 | 活动启动路径、日志路径、数据库、部署环境和 `ACPs-SDK` 依赖保持不变，避免影响原功能 |
 
 远端当前实际活跃/保留目录如下：
 
@@ -136,7 +137,6 @@ alembic_version=d4e5f6a7b8c9
 | `/home/johnteller/team_ws/yhl/ACPs-Discovery-Server` | 现有 Discovery 服务 | 短期保留，后续对接 ACPs-community v2.1 Discovery |
 | `/home/johnteller/team_ws/yhl/partner-literature-*`、`direct_rpc_server.py` | Partner Agent / Direct RPC | MQ Inbox 未稳定前保留 fallback |
 | `/home/johnteller/team_ws/ACPs_update_code/ACPs-SDK` | 当前启动脚本引用的旧 SDK | SDK 升级前必须保留该路径 |
-| `/home/johnteller/team_ws/cyf/ACPs-Registry-Server` | 历史 legacy registry，被 `start_all_servers.sh` 引用 | 先保留，不作为主升级对象 |
 | `/home/johnteller/team_ws/server_logs` | 日志和 PID 路径 | 保留原路径，启动脚本仍写入这里 |
 
 语义化软链接视图如下，供后续开发和文档引用：
@@ -153,10 +153,12 @@ alembic_version=d4e5f6a7b8c9
   discovery_server          -> ../yhl/ACPs-Discovery-Server
   agent_partners_yhl        -> ../yhl
   legacy_acps_sdk           -> ../ACPs_update_code/ACPs-SDK
-  legacy_acps_reference     -> ../ACPs_update_code
-  legacy_registry_cyf       -> ../cyf/ACPs-Registry-Server
   server_logs               -> ../server_logs
 ```
+
+`cyf/ACPs-Registry-Server` 是已弃用的 Registry 副本，平台实际使用 `sds/registry-server`；`ACPs_update_code` 下旧 Registry、CA、Challenge、Client 和 Discovery 也不是运行源。上述副本已删除，文献编排的默认 Discovery 配置路径已改为活动的 `yhl/ACPs-Discovery-Server/.env`，仅保留仍被编排端导入的 `ACPs-SDK`。
+
+清理后的总门禁曾暴露一个既有可用性缺口：Mode Router 已配置外部路由 LLM 时，网络超时会直接返回 500，原有本地规则 fallback 不会生效。现已只对 `RouteClassifierError` 增加本地规则降级，正常 LLM 成功路径不变，并增加专项单测。最终总门禁全部通过，浏览器验证中首页、广场、登录和受保护路由正常，当前前端静态资源及广场 API 均返回 200，控制台无 error。
 
 因此，升级分支/补丁应直接面向远端真实路径：
 

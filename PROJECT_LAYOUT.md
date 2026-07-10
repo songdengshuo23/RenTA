@@ -15,7 +15,6 @@ Root: `/home/johnteller/team_ws`
 | `yhl/ACPs-Discovery-Server` | Existing Discovery server | Active/compatible discovery source |
 | `yhl/partner-literature-*` and `yhl/direct_rpc_server.py` | Partner agents / Direct RPC support | Active in group/direct RPC flows |
 | `ACPs_update_code/ACPs-SDK` | Legacy ACPs SDK referenced by startup scripts | Keep in place until SDK upgrade |
-| `cyf/ACPs-Registry-Server` | Legacy registry snapshot referenced by `start_all_servers.sh` | Keep in place; not used by `wyl/start_stack.sh` main platform path |
 | `server_logs` | Runtime logs and PID files | Keep in place; startup scripts write here |
 
 ## Semantic symlink view
@@ -26,7 +25,26 @@ A non-invasive project view is available at:
 /home/johnteller/team_ws/renta_platform
 ```
 
-This directory contains symlinks with descriptive names. It does not replace or rename active runtime paths, so existing scripts continue to work.
+This directory contains symlinks with descriptive names. It does not replace or rename active runtime paths, so existing scripts continue to work. The obsolete `legacy_registry_cyf` and broad `legacy_acps_reference` links were removed; `legacy_acps_sdk` remains valid.
+
+## Removed unused runtime copies
+
+The following paths had no process, startup, systemd, cron, Docker, or source-code runtime references and were deleted after the active paths were verified:
+
+```text
+cyf/
+sds/image-parts/
+ACPs_update_code/ACPs-Registry-Server/
+ACPs_update_code/ACPs-CA-Server/
+ACPs_update_code/ACPs-CA-Challenge/
+ACPs_update_code/ACPs-CA-Client/
+ACPs_update_code/ACPs-Discovery-Server/
+wyl/frontend_backups/
+module-local backups/ and *.bak* files
+25 unreachable files from an obsolete Vite build in wyl/frontend/assets/
+```
+
+`sds/registry-server` is the only Registry implementation used by the platform. `yhl/ACPs-Discovery-Server` is the active Discovery implementation. `ACPs_update_code/ACPs-SDK` is deliberately retained because Mode Router and partner startup paths still import it.
 
 ## Cleanup archive
 
@@ -36,12 +54,12 @@ Backup/temp top-level folders not on the active startup path were moved to:
 /home/johnteller/team_ws/_archive/pre_upgrade_cleanup_*/
 ```
 
-This is reversible. No active project code directory was deleted.
+The archived pre-upgrade material remains reversible. The unused runtime copies listed above were deleted rather than archived; they remain available in Git history at commit `88542ce` if a historical comparison is needed.
 
 ## Main startup entry points
 
 ```bash
-# Full historical inventory/start script
+# Full active-service inventory/start script
 /home/johnteller/team_ws/start_all_servers.sh
 
 # Current platform startup path used by frontend/gateway stack

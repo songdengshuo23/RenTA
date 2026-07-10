@@ -16,7 +16,7 @@ from typing import Any, Mapping
 HERE = Path(__file__).resolve().parent
 WORKSPACE_ROOT = HERE.parent.parent
 SDK_PATH = WORKSPACE_ROOT / 'ACPs_update_code' / 'ACPs-SDK'
-DEFAULT_ENV_FILE = WORKSPACE_ROOT / 'ACPs_update_code' / 'ACPs-Discovery-Server' / '.env'
+DEFAULT_ENV_FILE = WORKSPACE_ROOT / 'yhl' / 'ACPs-Discovery-Server' / '.env'
 RUNS_DIR = HERE / 'literature_runs'
 DISCOVERY_URL = 'http://127.0.0.1:8005/acps-adp-v2/discover'
 
