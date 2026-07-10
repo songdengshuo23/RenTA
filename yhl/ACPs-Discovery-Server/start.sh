@@ -27,14 +27,14 @@ error() {
 
 cd "$PROJECT_ROOT"
 
-# 自动从当前激活的环境中寻找Python解释器
-PYTHON_BIN="$(command -v python)"
+# 优先使用项目运行环境，允许运维显式覆盖。
+PYTHON_BIN="${DISCOVERY_PYTHON_BIN:-$VENV_DIR/bin/python}"
+if [ ! -x "$PYTHON_BIN" ]; then
+  PYTHON_BIN="$(command -v python3 || true)"
+fi
 
-cd "$PROJECT_ROOT"
-
-# 检查是否能找到Python，并且它是否可执行
 if [ -z "$PYTHON_BIN" ] || [ ! -x "$PYTHON_BIN" ]; then
-  error "Could not find an active Python executable. Please activate your Conda or venv environment first."
+  error "Could not find a usable Python executable."
 fi
 
 if [ ! -f "$ENV_FILE" ]; then

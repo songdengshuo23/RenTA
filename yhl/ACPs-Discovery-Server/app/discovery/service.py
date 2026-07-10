@@ -316,13 +316,17 @@ def _registry_atr_token() -> str:
     )
 
 
-def _registry_item_endpoint(item: Mapping[str, Any]) -> Dict[str, Any]:
+def _registry_item_endpoints(item: Mapping[str, Any]) -> List[Dict[str, Any]]:
     acp = _as_dict(item.get("acp") or item.get("acs"))
     endpoints = acp.get("endpoints") or acp.get("endPoints") or []
-    if not isinstance(endpoints, list) or not endpoints:
-        return {}
-    endpoint = endpoints[0]
-    return dict(endpoint) if isinstance(endpoint, Mapping) else {}
+    if not isinstance(endpoints, list):
+        return []
+    return [dict(endpoint) for endpoint in endpoints if isinstance(endpoint, Mapping)]
+
+
+def _registry_item_endpoint(item: Mapping[str, Any]) -> Dict[str, Any]:
+    endpoints = _registry_item_endpoints(item)
+    return endpoints[0] if endpoints else {}
 
 
 def _registry_declared_skills(item: Mapping[str, Any]) -> List[Dict[str, Any]]:
@@ -358,7 +362,7 @@ def _registry_declared_skills(item: Mapping[str, Any]) -> List[Dict[str, Any]]:
 
 def _registry_item_to_discovery_acs(item: Mapping[str, Any]) -> Dict[str, Any]:
     acp = _as_dict(item.get("acp") or item.get("acs"))
-    endpoint = _registry_item_endpoint(item)
+    endpoints = _registry_item_endpoints(item)
     runtime = _as_dict(item.get("runtime"))
     interaction = _as_dict(acp.get("interaction"))
     capabilities = _as_dict(acp.get("capabilities"))
@@ -369,21 +373,21 @@ def _registry_item_to_discovery_acs(item: Mapping[str, Any]) -> Dict[str, Any]:
             "notification": interaction.get("notification", False),
         }
     aic = str(item.get("agentAic") or item.get("aic") or acp.get("aic") or "")
-    return {
+    discovery_acs = {
         "aic": aic,
         "name": item.get("name") or acp.get("name") or aic,
         "active": bool(item.get("eligibleForDispatch", True)),
         "skills": _registry_declared_skills(item),
         "version": item.get("version") or acp.get("version") or "1.0.0",
         "provider": acp.get("provider") or {},
-        "endPoints": [endpoint] if endpoint else [],
+        "endPoints": endpoints,
         "description": item.get("description") or acp.get("description") or "",
         "capabilities": capabilities,
         "protocolVersion": acp.get("protocolVersion") or "02.00",
         "securitySchemes": acp.get("securitySchemes") or {},
         "lastModifiedTime": item.get("updatedAt") or acp.get("lastModifiedTime") or "",
-        "defaultInputModes": acp.get("inputModes") or ["text/plain", "application/json"],
-        "defaultOutputModes": acp.get("outputModes") or ["text/plain", "application/json"],
+        "defaultInputModes": acp.get("defaultInputModes") or acp.get("inputModes") or ["text/plain", "application/json"],
+        "defaultOutputModes": acp.get("defaultOutputModes") or acp.get("outputModes") or ["text/plain", "application/json"],
         "eligibleForDispatch": item.get("eligibleForDispatch"),
         "dispatchReasons": item.get("dispatchReasons") or [],
         "orchestratorHints": item.get("orchestratorHints") or {},
@@ -398,6 +402,10 @@ def _registry_item_to_discovery_acs(item: Mapping[str, Any]) -> Dict[str, Any]:
             "permissionTier": item.get("permissionTier"),
         },
     }
+    for key in ("certificate", "documentationUrl", "webAppUrl", "entityUserId"):
+        if acp.get(key) is not None:
+            discovery_acs[key] = acp[key]
+    return discovery_acs
 
 
 def _registry_item_dispatchable(item: Mapping[str, Any]) -> bool:

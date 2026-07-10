@@ -138,7 +138,7 @@ if __name__ == "__main__":
     logger.info(f"服务地址: http://{settings.UVICORN_HOST}:{settings.UVICORN_PORT}")
     logger.info(f"API文档: http://{settings.UVICORN_HOST}:{settings.UVICORN_PORT}/docs")
     logger.info(f"Registry DRC URL: {settings.DRC_BASE_URL}")
-    logger.info(f"数据库: {settings.DATABASE_URL}")
+    logger.info("数据库配置: 已加载")
     logger.info(f"自动重载: {'启用' if settings.UVICORN_RELOAD else '禁用'}")
     logger.info(f"日志级别: {settings.UVICORN_LOG_LEVEL}")
 

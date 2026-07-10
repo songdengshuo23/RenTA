@@ -554,6 +554,79 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(response["execution"]["dry_run"])
         self.assertEqual(response["plan"]["primary_agent"]["aic"], "agent-square")
 
+    def test_stage5_discovery_preference_flag_defaults_off_and_allows_payload_override(self):
+        with patch.dict(service.os.environ, {}, clear=False):
+            service.os.environ.pop("ACPS_DISCOVERY_V21_ENABLED", None)
+            self.assertFalse(service._payload_prefers_discovery({}))
+
+        with patch.dict(service.os.environ, {"ACPS_DISCOVERY_V21_ENABLED": "true"}, clear=False):
+            self.assertTrue(service._payload_prefers_discovery({}))
+            self.assertFalse(service._payload_prefers_discovery({"prefer_discovery": "false"}))
+            self.assertFalse(service._payload_prefers_discovery({"candidate_source": "registry_passport"}))
+
+    def test_stage5_discovery_first_uses_route_only_v21_response(self):
+        discovery_response = {
+            "result": {
+                "acsMap": {
+                    "agent-v21": {
+                        "name": "V21 Agent",
+                        "protocolVersion": "02.01",
+                        "endPoints": [
+                            {"url": "amqps://mq.example/acps", "transport": "AMQP"},
+                            {"url": "https://agent.example/rpc", "transport": "JSONRPC"},
+                        ],
+                    }
+                },
+                "routes": [
+                    {
+                        "forwardChain": ["discovery-a"],
+                        "agentGroups": [
+                            {"group": "v21", "agentSkills": [{"aic": "agent-v21", "skillId": "skill-v21"}]}
+                        ],
+                    }
+                ],
+            }
+        }
+        payload = {"registry_url": "http://registry.invalid", "discovery_url": "http://discovery.invalid"}
+        with patch.dict(service.os.environ, {"ACPS_DISCOVERY_V21_ENABLED": "true"}, clear=False):
+            with patch.object(service, "call_discovery", return_value=discovery_response) as discovery_call:
+                with patch.object(service, "_normalize_from_registry") as registry_call:
+                    normalized, context = service._normalize_execute_candidates("v21 task", payload)
+
+        discovery_call.assert_called_once()
+        registry_call.assert_not_called()
+        self.assertEqual(context["candidate_source"], "discovery")
+        self.assertEqual(normalized["skills"][0]["preferred_endpoint"], "https://agent.example/rpc")
+        self.assertEqual(normalized["metadata"]["discovery_contract"]["forward_chain"], ["discovery-a"])
+
+    def test_stage5_empty_or_error_discovery_falls_back_to_registry_passport(self):
+        fallback = {"task": "task", "skills": [{"aic": "registry-agent"}], "hints": {}, "config": {}, "source": "registry_passport_discovery", "metadata": {}}
+        fallback_context = {"candidate_source": "registry_discovery", "registry_url": "http://registry.invalid"}
+        payload = {"prefer_discovery": True, "registry_url": "http://registry.invalid", "discovery_url": "http://discovery.invalid"}
+
+        for discovery_response, expected_source in (
+            ({"result": {"acsMap": {}, "agents": [], "routes": []}}, "registry_fallback_after_empty_discovery"),
+            ({"error": {"code": 50001, "message": "failed"}}, "registry_fallback_after_discovery_error"),
+        ):
+            with self.subTest(expected_source=expected_source):
+                with patch.object(service, "call_discovery", return_value=discovery_response):
+                    with patch.object(service, "_normalize_from_registry", return_value=(fallback, dict(fallback_context))) as registry_call:
+                        normalized, context = service._normalize_execute_candidates("task", payload)
+                registry_call.assert_called_once()
+                self.assertEqual(normalized["skills"][0]["aic"], "registry-agent")
+                self.assertEqual(context["candidate_source"], expected_source)
+
+    def test_stage5_http_endpoint_selection_does_not_execute_amqp(self):
+        acs = {
+            "endPoints": [
+                {"url": "amqps://mq.example/acps", "transport": "AMQP"},
+                {"url": "https://agent.example/api", "transport": "HTTP_JSON"},
+                {"url": "https://agent.example/rpc", "transport": "JSONRPC"},
+            ]
+        }
+        self.assertEqual(service._first_endpoint_url_from_acs(acs), "https://agent.example/rpc")
+        self.assertEqual(service._first_endpoint_url_from_acs({"endPoints": [acs["endPoints"][0]]}), "")
+
 
 if __name__ == "__main__":
     unittest.main()

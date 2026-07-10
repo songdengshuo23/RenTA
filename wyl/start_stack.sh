@@ -164,6 +164,46 @@ start_frontend() {
   }
 }
 
+start_discovery() {
+  local enabled="${ACPS_DISCOVERY_V21_ENABLED:-false}"
+  case "${enabled,,}" in
+    1|true|yes|on) ;;
+    *)
+      echo "discovery:disabled"
+      return 0
+      ;;
+  esac
+
+  local dir="$ROOT/yhl/ACPs-Discovery-Server"
+  local log="$ROOT/server_logs/yhl-discovery-v21.log"
+  mkdir -p "$ROOT/server_logs" "$dir/logs"
+  if port_listening 8005; then
+    echo "discovery:already_listening"
+    return 0
+  fi
+  (
+    cd "$dir"
+    set -a
+    . ./.env
+    set +a
+    export UVICORN_HOST="0.0.0.0"
+    export UVICORN_PORT="8005"
+    export UVICORN_RELOAD="false"
+    export DRC_BASE_URL="http://127.0.0.1:8001/acps-dsp-v2"
+    export DRC_SERVICE_TOKEN="${DSP_SERVICE_TOKEN:-${DRC_SERVICE_TOKEN:-local-dsp-token}}"
+    export REGISTRY_ATR_BASE_URL="http://127.0.0.1:8001/acps-atr-v2"
+    export REGISTRY_ATR_SERVICE_TOKEN="${REGISTRY_SERVICE_TOKEN:-${REGISTRY_ATR_SERVICE_TOKEN:-local-dev-token}}"
+    export PYTHONPATH="$dir:$ROOT/ACPs_update_code/ACPs-SDK"
+    nohup "$dir/venv/bin/python" -u main.py > "$log" 2>&1 &
+    echo $! > "$dir/logs/service.pid"
+  )
+  wait_for_port 8005 30 && echo "discovery:started" || {
+    echo "discovery:failed"
+    tail -n 100 "$log" || true
+    return 1
+  }
+}
+
 start_mode_router() {
   local dir="$ROOT/th/mode_router"
   local log="$ROOT/server_logs/th-mode-router.wyl-restart.log"
@@ -183,6 +223,9 @@ start_mode_router() {
   set_env_kv RABBITMQ_USER "${RABBITMQ_USER:-guest}"
   set_env_kv RABBITMQ_PASSWORD "${RABBITMQ_PASSWORD:-guest}"
   set_env_kv RABBITMQ_VHOST "${RABBITMQ_VHOST:-/}"
+  set_env_kv ACPS_DISCOVERY_V21_ENABLED "${ACPS_DISCOVERY_V21_ENABLED:-false}"
+  set_env_kv ACPS_DISCOVERY_LEGACY_FALLBACK_ENABLED "${ACPS_DISCOVERY_LEGACY_FALLBACK_ENABLED:-true}"
+  set_env_kv ORCHESTRATOR_DISCOVERY_URL "${ORCHESTRATOR_DISCOVERY_URL:-http://127.0.0.1:8005/acps-adp-v2/discover}"
   if port_listening 18080; then
     echo "mode_router:already_listening"
     return 0
@@ -284,10 +327,11 @@ stop_legacy_registry
 start_challenge
 start_ca
 start_registry
+start_discovery
 start_mode2_group_adapter
 start_mode_router
 start_direct_rpc
 start_frontend
 
 echo "ports:"
-ss -ltnp 2>/dev/null | grep -E ':(8001|8003|8004|18080|19090|8888)\b' || true
+ss -ltnp 2>/dev/null | grep -E ':(8001|8003|8004|8005|18080|19090|8888)\b' || true

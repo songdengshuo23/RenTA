@@ -860,12 +860,19 @@ def _payload_prefers_discovery(payload: Mapping[str, Any]) -> bool:
     source = str(payload.get("candidate_source") or payload.get("candidateSource") or "").strip().lower()
     if source in {"discovery", "adp", "discovery_server", "acps_discovery"}:
         return True
-    return bool(
-        payload.get(
-            "prefer_discovery",
-            payload.get("preferDiscovery", payload.get("use_discovery", payload.get("useDiscovery", False))),
-        )
-    )
+    if source in {"registry", "registry_discovery", "registry_passport", "passport"}:
+        return False
+    for key in ("prefer_discovery", "preferDiscovery", "use_discovery", "useDiscovery"):
+        if key in payload:
+            return _truthy(payload.get(key), False)
+    return _truthy(os.getenv("ACPS_DISCOVERY_V21_ENABLED"), False)
+
+
+def _registry_discovery_fallback_enabled(payload: Mapping[str, Any]) -> bool:
+    for key in ("registry_fallback", "registryFallback"):
+        if key in payload:
+            return _truthy(payload.get(key), True)
+    return _truthy(os.getenv("ACPS_DISCOVERY_LEGACY_FALLBACK_ENABLED"), True)
 
 
 def _payload_prefers_registry_public_recent(payload: Mapping[str, Any]) -> bool:
@@ -1000,8 +1007,16 @@ def _normalize_execute_candidates(
             retries=int(payload.get("discovery_retries", payload.get("discoveryRetries", payload.get("retries", 1)))),
             retry_backoff=float(payload.get("retry_backoff", payload.get("retryBackoff", 2))),
         )
-    except DiscoveryCallError as exc:
-        if not bool(payload.get("registry_fallback", payload.get("registryFallback", True))):
+        normalized = normalize_request_payload(
+            {
+                "task": task,
+                "hints": payload.get("hints") or {},
+                "config": payload.get("config") or {},
+                "discovery_response": discovery_response,
+            }
+        )
+    except (DiscoveryCallError, ValueError) as exc:
+        if not _registry_discovery_fallback_enabled(payload):
             raise
         fallback_registry_url = _registry_fallback_url_from_payload(payload)
         if not fallback_registry_url:
@@ -1012,24 +1027,16 @@ def _normalize_execute_candidates(
         context["discovery_url"] = discovery_url
         context["discovery_request"] = discovery_request
         return normalized, context
-    normalized = normalize_request_payload(
-        {
-            "task": task,
-            "hints": payload.get("hints") or {},
-            "config": payload.get("config") or {},
-            "discovery_response": discovery_response,
-        }
-    )
-    if not normalized["skills"] and _registry_public_recent_fallback_enabled(payload):
+    if not normalized["skills"] and _registry_discovery_fallback_enabled(payload):
         fallback_registry_url = _registry_fallback_url_from_payload(payload)
         if fallback_registry_url:
-            public_normalized, context = _normalize_from_registry_public_recent(task, payload, fallback_registry_url)
-            if public_normalized["skills"]:
-                context["candidate_source"] = "registry_public_recent_after_empty_discovery"
+            fallback_normalized, context = _normalize_from_registry(task, payload, fallback_registry_url)
+            if fallback_normalized["skills"]:
+                context["candidate_source"] = "registry_fallback_after_empty_discovery"
                 context["discovery_url"] = discovery_url
                 context["discovery_request"] = discovery_request
                 context["discovery_response"] = discovery_response
-                return public_normalized, context
+                return fallback_normalized, context
     return normalized, {
         "candidate_source": "discovery",
         "registry_url": registry_url,
@@ -1140,11 +1147,24 @@ def _record_mode2_payload_traffic(
         return 0
 
 
-def _first_endpoint_url_from_acs(acs: Mapping[str, Any]) -> str:
+def _preferred_http_endpoint_from_acs(acs: Mapping[str, Any]) -> Mapping[str, Any]:
     endpoints = acs.get("endPoints") or acs.get("endpoints") or []
     if not isinstance(endpoints, list) or not endpoints:
-        return ""
-    endpoint = endpoints[0] if isinstance(endpoints[0], Mapping) else {}
+        return {}
+    priority = {"JSONRPC": 0, "HTTP_JSON": 1, "HTTP": 2, "": 3}
+    candidates: list[tuple[int, int, Mapping[str, Any]]] = []
+    for index, endpoint in enumerate(endpoints):
+        if not isinstance(endpoint, Mapping):
+            continue
+        url = str(endpoint.get("url") or endpoint.get("href") or "").strip()
+        transport = str(endpoint.get("transport") or "").strip().upper()
+        if url.startswith(("http://", "https://")) and transport in priority:
+            candidates.append((priority[transport], index, endpoint))
+    return min(candidates, key=lambda item: (item[0], item[1]))[2] if candidates else {}
+
+
+def _first_endpoint_url_from_acs(acs: Mapping[str, Any]) -> str:
+    endpoint = _preferred_http_endpoint_from_acs(acs)
     return str(endpoint.get("url") or endpoint.get("href") or "").strip()
 
 
@@ -2944,11 +2964,7 @@ def _registry_items_from_response(registry_response: Mapping[str, Any]) -> list[
 
 def _first_agent_endpoint(item: Mapping[str, Any]) -> str:
     acs = item.get("acs") or item.get("acp") or {}
-    endpoints = acs.get("endPoints") or acs.get("endpoints") or []
-    if not isinstance(endpoints, list) or not endpoints:
-        return ""
-    first = endpoints[0] if isinstance(endpoints[0], Mapping) else {}
-    return str(first.get("url") or "")
+    return _first_endpoint_url_from_acs(acs) if isinstance(acs, Mapping) else ""
 
 
 def _public_agent_aic(item: Mapping[str, Any]) -> str:
@@ -2974,12 +2990,13 @@ def _agent_search_text(item: Mapping[str, Any]) -> str:
 def _candidate_agent_summary(item: Mapping[str, Any]) -> dict[str, Any]:
     acs = item.get("acs") or item.get("acp") or {}
     skills = acs.get("skills") or item.get("declaredSkills") or []
+    endpoint = _preferred_http_endpoint_from_acs(acs) if isinstance(acs, Mapping) else {}
     return {
         "aic": _public_agent_aic(item),
         "name": item.get("name") or acs.get("name") or "",
         "description": item.get("description") or acs.get("description") or "",
         "endpoint": _first_agent_endpoint(item),
-        "transport": ((acs.get("endPoints") or acs.get("endpoints") or [{}])[0] or {}).get("transport", "") if isinstance(acs.get("endPoints") or acs.get("endpoints") or [], list) else "",
+        "transport": endpoint.get("transport", ""),
         "active": acs.get("active"),
         "status": item.get("status"),
         "created_at": item.get("created_at"),
