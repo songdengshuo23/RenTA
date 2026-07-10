@@ -6,6 +6,7 @@ ACME 业务逻辑服务
 
 import secrets
 import base64
+import ipaddress
 from datetime import timedelta
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from cryptography import x509
@@ -150,6 +151,7 @@ class AccountService:
             contact=account_data.contact,
             terms_of_service_agreed=account_data.terms_of_service_agreed,
             external_account_binding=account_data.external_account_binding,
+            aic=account_data.aic,
         )
 
         self.session.add(account)
@@ -357,7 +359,11 @@ class CertificateService:
         self.settings = get_settings()
 
     def issue_certificate(
-        self, order: AcmeOrder, csr_der: bytes, agent_infos: List["AgentInfo"] = None
+        self,
+        order: AcmeOrder,
+        csr_der: bytes,
+        agent_infos: List["AgentInfo"] = None,
+        v21_identity: bool = False,
     ) -> List[AcmeCertificate]:
         """签发证书 - 支持为每个Agent分别签发证书
 
@@ -405,7 +411,18 @@ class CertificateService:
                     agent_info = agent_infos[0]
 
             # 为单个Agent生成证书
-            cert_pem = self._generate_certificate_for_agent(csr, agent_id, agent_info)
+            cert_pem = self._generate_certificate_for_agent(
+                csr,
+                agent_id,
+                agent_info,
+                v21_identity=v21_identity,
+            )
+
+            validity_days = 49
+            if v21_identity and agent_info:
+                validity_days = agent_info.get_certificate_validity_days(
+                    self.settings.max_certificate_validity_days
+                )
 
             # 从生成的证书中提取序列号，确保数据库记录与实际证书一致
             serial_number = self._extract_serial_number_from_cert_pem(cert_pem)
@@ -417,8 +434,7 @@ class CertificateService:
                 certificate_pem=cert_pem,
                 subject=self._extract_subject_from_cert_pem(cert_pem),
                 not_before=beijing_now(),
-                not_after=beijing_now()
-                + timedelta(days=49),  # 49天有效期，符合文档要求
+                not_after=beijing_now() + timedelta(days=validity_days),
                 aic=agent_id,  # 设置AIC字段
             )
 
@@ -511,6 +527,75 @@ class CertificateService:
                 error_msg=f"CSR Common Name '{cn}' does not match any ordered identifiers",
             )
 
+    def verify_v21_csr_identity(
+        self, csr_der: bytes, account_aic: str, agent_info: "AgentInfo"
+    ) -> None:
+        """Validate that a v2.1 CSR cannot escape the EAB/ACS identity boundary."""
+        try:
+            csr = x509.load_der_x509_csr(csr_der)
+        except ValueError as exc:
+            raise AcmeException(
+                status_code=400,
+                error_name=AcmeError.INVALID_CERTIFICATE_FORMAT,
+                error_msg="Invalid CSR encoding",
+            ) from exc
+
+        if not csr.is_signature_valid:
+            raise AcmeException(
+                status_code=400,
+                error_name=AcmeError.INVALID_CERTIFICATE_FORMAT,
+                error_msg="Invalid CSR signature",
+            )
+
+        common_names = csr.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        if len(common_names) != 1 or common_names[0].value != account_aic:
+            raise AcmeException(
+                status_code=400,
+                error_name=AcmeError.INVALID_CERTIFICATE_FORMAT,
+                error_msg="CSR Common Name must equal the account-bound AIC",
+            )
+
+        try:
+            san = csr.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value
+        except x509.ExtensionNotFound as exc:
+            raise AcmeException(
+                status_code=400,
+                error_name=AcmeError.INVALID_CERTIFICATE_FORMAT,
+                error_msg="v2.1 CSR must contain SubjectAlternativeName",
+            ) from exc
+
+        expected_uri = f"acps://{account_aic}"
+        uri_values = set(san.get_values_for_type(x509.UniformResourceIdentifier))
+        if expected_uri not in uri_values:
+            raise AcmeException(
+                status_code=400,
+                error_name=AcmeError.INVALID_CERTIFICATE_FORMAT,
+                error_msg=f"CSR SAN must contain URI:{expected_uri}",
+            )
+
+        allowed_dns = set(agent_info.get_certificate_dns_names())
+        requested_dns = set(san.get_values_for_type(x509.DNSName))
+        if not requested_dns.issubset(allowed_dns):
+            raise AcmeException(
+                status_code=400,
+                error_name=AcmeError.INVALID_CERTIFICATE_FORMAT,
+                error_msg="CSR contains DNS SAN values not declared by Registry ACS",
+            )
+
+        allowed_ips = {
+            ipaddress.ip_address(value)
+            for value in agent_info.get_certificate_ip_addresses()
+        }
+        requested_ips = set(san.get_values_for_type(x509.IPAddress))
+        if not requested_ips.issubset(allowed_ips):
+            raise AcmeException(
+                status_code=400,
+                error_name=AcmeError.INVALID_CERTIFICATE_FORMAT,
+                error_msg="CSR contains IP SAN values not declared by Registry ACS",
+            )
+
     def _generate_certificate(
         self,
         csr: x509.CertificateSigningRequest,
@@ -567,6 +652,7 @@ class CertificateService:
         csr: x509.CertificateSigningRequest,
         agent_id: str,
         agent_info: Optional["AgentInfo"] = None,
+        v21_identity: bool = False,
     ) -> str:
         """为单个Agent生成证书
 
@@ -581,7 +667,19 @@ class CertificateService:
         # 构造证书DN信息
         cert_subject_components = {}
         if agent_info:
-            cert_subject_components = agent_info.get_certificate_subject_components()
+            cert_subject_components = agent_info.get_certificate_subject_components(
+                v21_identity=v21_identity
+            )
+
+        validity_days = 49
+        dns_sans = None
+        ip_sans = None
+        if v21_identity and agent_info:
+            validity_days = agent_info.get_certificate_validity_days(
+                self.settings.max_certificate_validity_days
+            )
+            dns_sans = agent_info.get_certificate_dns_names()
+            ip_sans = agent_info.get_certificate_ip_addresses()
 
         # 使用 CA 管理器签发证书（单个Agent）
         ca_manager = get_ca_manager()
@@ -589,8 +687,11 @@ class CertificateService:
             cert_pem = ca_manager.sign_certificate(
                 csr,
                 [agent_id],  # 单个Agent的列表
-                validity_days=49,  # 符合文档要求的49天
+                validity_days=validity_days,
                 subject_components=cert_subject_components,
+                v21_identity=v21_identity,
+                dns_sans=dns_sans,
+                ip_sans=ip_sans,
             )
             return cert_pem
         except Exception as e:

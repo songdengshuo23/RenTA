@@ -7,7 +7,7 @@ Agent 注册服务客户端
 import httpx
 import asyncio
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from app.core.config import get_settings
 from .mock_data import MockDataGenerator
 
@@ -36,6 +36,7 @@ class AgentInfo:
         self.agent_id = self.aic  # agent_id 与 aic 相同
         self.name = data.get("name", "")
         self.version = data.get("version", "")
+        self.protocol_version = data.get("protocolVersion", "")
 
         # active 字段是布尔值，表示 Agent 是否激活
         self.active = data.get("active", False)
@@ -68,6 +69,32 @@ class AgentInfo:
         self.capabilities = data.get("capabilities", {})
         self.skills = data.get("skills", [])
 
+        # ACPs v2.1 ACS 证书参数。旧 ACS 无该字段时保持旧签发默认值。
+        certificate = data.get("certificate", {})
+        if not isinstance(certificate, dict):
+            certificate = {}
+        alt_names = certificate.get("altNames", {})
+        if not isinstance(alt_names, dict):
+            alt_names = {}
+        dns_names = alt_names.get("dns", [])
+        ip_addresses = alt_names.get("ip", [])
+        self.certificate_alt_names_dns = (
+            [item for item in dns_names if isinstance(item, str) and item]
+            if isinstance(dns_names, list)
+            else []
+        )
+        self.certificate_alt_names_ip = (
+            [item for item in ip_addresses if isinstance(item, str) and item]
+            if isinstance(ip_addresses, list)
+            else []
+        )
+        requested_validity = certificate.get("requestedValidity")
+        self.certificate_requested_validity = (
+            requested_validity
+            if isinstance(requested_validity, int) and requested_validity > 0
+            else None
+        )
+
     def is_valid(self) -> bool:
         """
         检查 Agent 是否有效
@@ -76,7 +103,9 @@ class AgentInfo:
         """
         return self.active
 
-    def get_certificate_subject_components(self) -> Dict[str, str]:
+    def get_certificate_subject_components(
+        self, v21_identity: bool = False
+    ) -> Dict[str, str]:
         """
         获取证书 Subject DN 组件
 
@@ -87,7 +116,8 @@ class AgentInfo:
         - C: provider.countryCode（可选）
         """
         settings = get_settings()
-        components = {"CN": settings.build_agent_common_name(self.aic)}
+        common_name = self.aic if v21_identity else settings.build_agent_common_name(self.aic)
+        components = {"CN": common_name}
 
         if self.organization:
             components["O"] = self.organization
@@ -97,6 +127,20 @@ class AgentInfo:
             components["C"] = self.country_code
 
         return components
+
+    def get_certificate_dns_names(self) -> List[str]:
+        """Return DNS SAN values declared by the v2.1 ACS."""
+        return list(self.certificate_alt_names_dns)
+
+    def get_certificate_ip_addresses(self) -> List[str]:
+        """Return IP SAN values declared by the v2.1 ACS."""
+        return list(self.certificate_alt_names_ip)
+
+    def get_certificate_validity_days(self, max_days: int = 1825) -> int:
+        """Return the ACS validity request clipped to the CA policy limit."""
+        if self.certificate_requested_validity:
+            return min(self.certificate_requested_validity, max_days)
+        return 49
 
     def get_challenge_url(self, token: str) -> str:
         """
@@ -126,6 +170,7 @@ class AgentRegistryClient:
     def __init__(self):
         self.settings = get_settings()
         self.base_url = self.settings.agent_registry_url
+        self.internal_base_url = self._resolve_internal_base_url()
         self.timeout = self.settings.agent_registry_timeout
         self.service_token = self.settings.agent_registry_service_token
         self.max_retries = self.settings.external_service_max_retries
@@ -136,6 +181,16 @@ class AgentRegistryClient:
         if self.is_mock_enabled:
             self.mock_generator = MockDataGenerator()
             print("AgentRegistryClient: Mock mode enabled")
+
+    def _resolve_internal_base_url(self) -> str:
+        configured = (self.settings.agent_registry_internal_url or "").strip()
+        if configured:
+            return configured.rstrip("/")
+
+        base_url = self.base_url.rstrip("/")
+        if base_url.endswith("/acps-atr-v2"):
+            return base_url[: -len("/acps-atr-v2")]
+        return base_url
 
     async def _make_request_with_retry(
         self, method: str, url: str, **kwargs
@@ -173,7 +228,39 @@ class AgentRegistryClient:
             headers["Authorization"] = f"Bearer {self.service_token}"
         return headers
 
-    async def validate_aic_and_get_info(self, aic: str) -> Optional[AgentInfo]:
+    async def consume_eab_credential(self, key_id: str) -> Optional[tuple[str, str]]:
+        """Consume a one-time EAB credential through the Registry internal API."""
+        if not isinstance(key_id, str) or not key_id.strip():
+            return None
+
+        try:
+            url = f"{self.internal_base_url}/internal/eab/consume"
+            response = await self._make_request_with_retry(
+                "POST",
+                url,
+                headers=self._get_auth_headers(),
+                json={"keyId": key_id.strip()},
+            )
+            if response is None or response.status_code != 200:
+                status = response.status_code if response is not None else "no-response"
+                print(f"EAB credential consumption failed for {key_id}: {status}")
+                return None
+
+            payload = response.json()
+            mac_key = payload.get("macKey")
+            aic = payload.get("aic")
+            if not isinstance(mac_key, str) or not mac_key.strip():
+                return None
+            if not isinstance(aic, str) or not aic.strip():
+                return None
+            return mac_key.strip(), aic.strip().upper()
+        except Exception as e:
+            print(f"EAB credential consumption failed for {key_id}: {e}")
+            return None
+
+    async def validate_aic_and_get_info(
+        self, aic: str, require_challenge: bool = True
+    ) -> Optional[AgentInfo]:
         """
         验证 AIC 有效性并获取相关信息
 
@@ -184,7 +271,7 @@ class AgentRegistryClient:
             AgentInfo 对象，如果验证失败则返回 None
         """
         # Mock 模式
-        if self.is_mock_enabled:
+        if self.is_mock_enabled and require_challenge:
             print(f"AgentRegistryClient: Using mock data for AIC validation: {aic}")
             mock_data = self.mock_generator.generate_agent_info(aic)
             return AgentInfo(mock_data)
@@ -235,7 +322,7 @@ class AgentRegistryClient:
             #    并且其中 x-caChallengeBaseUrl 字段存在且格式正确
             #    注意：不需要检查 endPoints 中某个端点的 security 是否使用了 mtls
             #    因为 Leader Agent 是客户端，不需要提供 endPoints，但需要定义 mutualTLS 下的 x-caChallengeBaseUrl
-            if not agent_info.ca_challenge_base_url:
+            if require_challenge and not agent_info.ca_challenge_base_url:
                 print(
                     f"Invalid agent data for {aic}: missing x-caChallengeBaseUrl in securitySchemes."
                 )

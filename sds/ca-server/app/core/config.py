@@ -40,14 +40,22 @@ class Settings(BaseSettings):
     # ACME 配置
     acme_directory_url: str = "http://localhost:8003/acps-atr-v2/acme"
 
+    # ACPs v2.1 CA 双轨开关。EAB 默认不接收新账户，旧 Challenge 链路默认保留。
+    acps_ca_eab_enabled: bool = False
+    acps_challenge_legacy_enabled: bool = True
+
     # Mock 模式配置 (开发/测试环境)
     agent_registry_mock: bool = False
     http01_validation_mock: bool = False
 
     # Agent 注册服务配置
     agent_registry_url: str = "http://localhost:8001"
+    agent_registry_internal_url: str = ""
     agent_registry_timeout: int = 10
     agent_registry_service_token: str = ""
+
+    # ACPs v2.1 证书有效期上限（天）。
+    max_certificate_validity_days: int = 1825
 
     # 外部服务重试配置
     external_service_max_retries: int = 3

@@ -227,6 +227,7 @@ class AccountCreate(BaseModel):
     contact: Optional[List[str]] = None
     terms_of_service_agreed: bool = False
     external_account_binding: Optional[Dict[str, Any]] = None
+    aic: Optional[str] = None
 
 
 class OrderCreate(BaseModel):

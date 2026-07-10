@@ -76,6 +76,9 @@ class AcmeAccount(SQLModel, table=True):
     external_account_binding: Optional[Dict[str, Any]] = Field(
         default=None, sa_column=Column(JSON)
     )
+    # ACPs v2.1 EAB 验证后与账户公钥绑定的 Agent Identity Code。
+    # 保持 nullable，以兼容升级前已存在的 legacy account。
+    aic: Optional[str] = Field(default=None, index=True, max_length=255)
 
     # 创建和更新时间
     created_at: datetime = Field(default_factory=beijing_now)

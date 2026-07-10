@@ -5,6 +5,7 @@ CA 证书管理器
 """
 
 import logging
+import ipaddress
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict
 from pathlib import Path
@@ -161,6 +162,9 @@ class CAManager:
         validity_days: int = 49,
         subject_components: Optional[Dict[str, str]] = None,
         agent_endpoints: Optional[List[str]] = None,
+        v21_identity: bool = False,
+        dns_sans: Optional[List[str]] = None,
+        ip_sans: Optional[List[str]] = None,
     ) -> str:
         """签发证书
 
@@ -212,7 +216,12 @@ class CAManager:
 
         # 添加Agent特定的SAN扩展
         cert_builder = self._add_agent_san_extensions(
-            cert_builder, agent_id, agent_endpoints
+            cert_builder,
+            agent_id,
+            agent_endpoints,
+            v21_identity=v21_identity,
+            dns_sans=dns_sans,
+            ip_sans=ip_sans,
         )
 
         # 签名证书
@@ -280,8 +289,12 @@ class CAManager:
         self, agent_id: str, subject_components: Optional[Dict[str, str]] = None
     ) -> x509.Name:
         """构造证书Subject DN"""
-        # 基础Subject组件，CN必须是Agent对应的域名
-        common_name = self.settings.build_agent_common_name(agent_id)
+        # Legacy 默认使用 AIC 域名；v2.1 调用方通过 subject_components 传入裸 AIC。
+        common_name = (
+            subject_components.get("CN")
+            if subject_components and subject_components.get("CN")
+            else self.settings.build_agent_common_name(agent_id)
+        )
         name_attributes = [x509.NameAttribute(NameOID.COMMON_NAME, common_name)]
 
         # 添加Agent注册信息中的组织信息
@@ -373,19 +386,27 @@ class CAManager:
         cert_builder: x509.CertificateBuilder,
         agent_id: str,
         agent_endpoints: Optional[List[str]] = None,
+        v21_identity: bool = False,
+        dns_sans: Optional[List[str]] = None,
+        ip_sans: Optional[List[str]] = None,
     ) -> x509.CertificateBuilder:
         """添加Agent特定的SAN扩展"""
         san_list = []
 
-        # 添加Agent域名形式的DNS名称
-        fqdn = self.settings.build_agent_common_name(agent_id)
-        san_list.append(x509.DNSName(fqdn))
-
-        # 添加Agent URI
-        san_list.append(x509.UniformResourceIdentifier(f"agent://{agent_id}"))
+        if v21_identity:
+            san_list.append(x509.UniformResourceIdentifier(f"acps://{agent_id}"))
+            for dns_name in dns_sans or []:
+                san_list.append(x509.DNSName(dns_name))
+            for ip_value in ip_sans or []:
+                san_list.append(x509.IPAddress(ipaddress.ip_address(ip_value)))
+        else:
+            # 保留升级前证书的 SAN 形状。
+            fqdn = self.settings.build_agent_common_name(agent_id)
+            san_list.append(x509.DNSName(fqdn))
+            san_list.append(x509.UniformResourceIdentifier(f"agent://{agent_id}"))
 
         # 如果提供了Agent端点，添加到SAN中
-        if agent_endpoints:
+        if agent_endpoints and not v21_identity:
             for endpoint in agent_endpoints:
                 try:
                     # 尝试解析为URI

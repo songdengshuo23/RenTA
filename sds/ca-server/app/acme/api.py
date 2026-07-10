@@ -32,6 +32,7 @@ from .services import (
     JWKService,
 )
 from .agent_registry import get_agent_registry_client
+from .eab_verifier import verify_eab_binding
 from .http01_validator import get_http01_validation_service
 from .jws_verifier import get_jws_verifier
 from .models import OrderStatus, AuthorizationStatus, ChallengeStatus, ChallengeType
@@ -195,7 +196,7 @@ async def get_directory(
         revokeCert=f"{base_url}/revoke-cert",
         keyChange=f"{base_url}/key-change",
         meta={
-            "externalAccountRequired": False,
+            "externalAccountRequired": settings.acps_ca_eab_enabled,
         },
     )
 
@@ -246,11 +247,17 @@ async def create_account(
     """创建新账户"""
     nonce_service = get_nonce_service(session)
     account_service = get_account_service(session)
+    agent_registry = get_agent_registry_client()
 
     try:
-        # 对于新账户请求，不验证URL，因为JWK是首次出现
+        expected_url = (
+            f"{_request.url.scheme}://{_request.url.netloc}{_request.url.path}"
+        )
+        # 开关关闭时保留旧 new-account 对 URL 的宽松行为。
         protected, payload, signature = parse_jws_request(
-            request_data, nonce_service, expected_url=None
+            request_data,
+            nonce_service,
+            expected_url=expected_url if settings.acps_ca_eab_enabled else None,
         )
 
         # 验证必须包含 jwk
@@ -294,16 +301,39 @@ async def create_account(
                     error_msg=f"Invalid signature for new account: {str(e)}",
                 )
 
-            # 创建新账户
-            account_data = AccountCreate(
-                key_id=key_id,
-                public_key=json.dumps(jwk),
-                contact=payload.get("contact"),
-                terms_of_service_agreed=payload.get("termsOfServiceAgreed", False),
-                external_account_binding=payload.get("externalAccountBinding"),
-            )
+            # 重复 new-account 仍返回已有账户，不消费新的一次性 EAB。
+            existing_account = account_service.get_account_by_key_id(key_id)
+            if existing_account:
+                account = existing_account
+            else:
+                external_account_binding = payload.get("externalAccountBinding")
+                bound_aic = None
+                if settings.acps_ca_eab_enabled:
+                    if not isinstance(external_account_binding, dict):
+                        raise AcmeException(
+                            status_code=400,
+                            error_name=AcmeError.EXTERNAL_ACCOUNT_REQUIRED,
+                            error_msg="externalAccountBinding is required for new account",
+                        )
+                    bound_aic = await verify_eab_binding(
+                        external_account_binding,
+                        jwk,
+                        expected_url,
+                        agent_registry,
+                    )
 
-            account = account_service.create_account(account_data)
+                account_data = AccountCreate(
+                    key_id=key_id,
+                    public_key=json.dumps(jwk),
+                    contact=payload.get("contact"),
+                    terms_of_service_agreed=payload.get(
+                        "termsOfServiceAgreed", False
+                    ),
+                    external_account_binding=external_account_binding,
+                    aic=bound_aic,
+                )
+
+                account = account_service.create_account(account_data)
 
         base_url = get_configured_acme_base_url(settings)
         account_url = f"{base_url}/acct/{account.id}"
@@ -424,6 +454,14 @@ async def create_order(
         # 验证JWS签名
         verify_jws_signature(request_data, protected, account)
 
+        eab_bound_account = bool(account.aic)
+        if not eab_bound_account and not settings.acps_challenge_legacy_enabled:
+            raise AcmeException(
+                status_code=403,
+                error_name=AcmeError.UNAUTHORIZED,
+                error_msg="Legacy HTTP-01 enrollment is disabled for unbound accounts",
+            )
+
         # 验证标识符
         identifiers = payload.get("identifiers", [])
         if not identifiers:
@@ -435,6 +473,7 @@ async def create_order(
 
         # 验证所有标识符都是有效的AIC
         validated_agents = []
+        normalized_identifiers = []
         for identifier in identifiers:
             if identifier.get("type") != "agent":
                 raise AcmeException(
@@ -443,16 +482,29 @@ async def create_order(
                     error_msg=f"Unsupported identifier type: {identifier.get('type')}",
                 )
 
-            aic = identifier.get("value")
-            if not aic:
+            raw_aic = identifier.get("value")
+            if not isinstance(raw_aic, str) or not raw_aic.strip():
                 raise AcmeException(
                     status_code=400,
                     error_name="MALFORMED_REQUEST",
                     error_msg="Missing identifier value",
                 )
 
+            aic = raw_aic.strip().upper() if eab_bound_account else raw_aic
+            if eab_bound_account and aic != account.aic:
+                raise AcmeException(
+                    status_code=400,
+                    error_name=AcmeError.INVALID_IDENTIFIER,
+                    error_msg="Order identifier does not match account-bound AIC",
+                )
+
             # 验证AIC并获取Agent信息
-            agent_info = await agent_registry.validate_aic_and_get_info(aic)
+            if eab_bound_account:
+                agent_info = await agent_registry.validate_aic_and_get_info(
+                    aic, require_challenge=False
+                )
+            else:
+                agent_info = await agent_registry.validate_aic_and_get_info(aic)
             if not agent_info:
                 raise AcmeException(
                     status_code=400,
@@ -460,40 +512,47 @@ async def create_order(
                     error_msg=f"Invalid or inactive agent: {aic}",
                 )
 
-            ownership_ok = await agent_registry.verify_agent_ownership(
-                aic,
-                {
-                    "key_id": account.key_id,
-                    "contact": account.contact,
-                    "external_account_binding": account.external_account_binding,
-                },
-            )
-            if not ownership_ok:
-                raise AcmeException(
-                    status_code=403,
-                    error_name="UNAUTHORIZED",
-                    error_msg=f"ACME account is not authorized for agent: {aic}",
+            if not eab_bound_account:
+                ownership_ok = await agent_registry.verify_agent_ownership(
+                    aic,
+                    {
+                        "key_id": account.key_id,
+                        "contact": account.contact,
+                        "external_account_binding": account.external_account_binding,
+                    },
                 )
+                if not ownership_ok:
+                    raise AcmeException(
+                        status_code=403,
+                        error_name="UNAUTHORIZED",
+                        error_msg=f"ACME account is not authorized for agent: {aic}",
+                    )
 
             validated_agents.append(agent_info)
+            normalized_identifiers.append({"type": "agent", "value": aic})
 
         # 预验证所有Agent端点是否可访问（仅在非Mock模式下进行实际验证）
-        http01_validator = get_http01_validation_service()
-        for agent_info in validated_agents:
-            pre_validation_result = await http01_validator.pre_validate_agent_endpoint(
-                agent_info
-            )
-            if not pre_validation_result.success:
-                raise AcmeException(
-                    status_code=400,
-                    error_name="INVALID_IDENTIFIER",
-                    error_msg=f"Agent endpoint validation failed for {agent_info.aic}: {pre_validation_result.error}",
+        if not eab_bound_account:
+            http01_validator = get_http01_validation_service()
+            for agent_info in validated_agents:
+                pre_validation_result = (
+                    await http01_validator.pre_validate_agent_endpoint(agent_info)
                 )
+                if not pre_validation_result.success:
+                    raise AcmeException(
+                        status_code=400,
+                        error_name="INVALID_IDENTIFIER",
+                        error_msg=f"Agent endpoint validation failed for {agent_info.aic}: {pre_validation_result.error}",
+                    )
+
+        order_identifiers = (
+            normalized_identifiers if eab_bound_account else identifiers
+        )
 
         # 创建订单
         order_data = OrderCreate(
             account_id=account.id,
-            identifiers=identifiers,
+            identifiers=order_identifiers,
             not_before=payload.get("notBefore"),
             not_after=payload.get("notAfter"),
         )
@@ -504,7 +563,7 @@ async def create_order(
         authorizations = []
         base_url = get_configured_acme_base_url(settings)
 
-        for identifier, agent_info in zip(identifiers, validated_agents):
+        for identifier, agent_info in zip(order_identifiers, validated_agents):
             # 创建授权
             auth_data = AuthorizationCreate(
                 order_id=order.id,
@@ -513,15 +572,20 @@ async def create_order(
             )
             authorization = authorization_service.create_authorization(auth_data)
 
-            # 创建 HTTP-01 挑战
-            challenge_data = ChallengeCreate(
-                authorization_id=authorization.id,
-                type=ChallengeType.HTTP_01,
-                token=base64.urlsafe_b64encode(secrets.token_bytes(32))
-                .decode("ascii")
-                .rstrip("="),
-            )
-            challenge_service.create_challenge(challenge_data)
+            if eab_bound_account:
+                authorization_service.update_authorization_status(
+                    authorization, AuthorizationStatus.VALID
+                )
+            else:
+                # Legacy account 继续使用原 HTTP-01 challenge。
+                challenge_data = ChallengeCreate(
+                    authorization_id=authorization.id,
+                    type=ChallengeType.HTTP_01,
+                    token=base64.urlsafe_b64encode(secrets.token_bytes(32))
+                    .decode("ascii")
+                    .rstrip("="),
+                )
+                challenge_service.create_challenge(challenge_data)
 
             authorizations.append(f"{base_url}/authz/{authorization.authz_id}")
 
@@ -535,6 +599,8 @@ async def create_order(
         order.authorizations = authorizations
         session.add(order)
         session.commit()
+        if eab_bound_account:
+            order = order_service.update_order_status(order, OrderStatus.READY)
 
         order_url = f"{base_url}/order/{order.order_id}"
 
@@ -883,6 +949,20 @@ async def finalize_order(
                 error_msg="Order is not ready for finalization",
             )
 
+        if account.aic:
+            for identifier in order.identifiers:
+                identifier_aic = identifier.get("value")
+                if (
+                    identifier.get("type") != "agent"
+                    or not isinstance(identifier_aic, str)
+                    or identifier_aic.strip().upper() != account.aic
+                ):
+                    raise AcmeException(
+                        status_code=400,
+                        error_name=AcmeError.INVALID_IDENTIFIER,
+                        error_msg="Order identifier does not match account-bound AIC",
+                    )
+
         # 解码 CSR
         csr_data = payload.get("csr")
         if not csr_data:
@@ -896,7 +976,12 @@ async def finalize_order(
         agent_infos = []
         for identifier in order.identifiers:
             aic = identifier.get("value")
-            agent_info = await agent_registry.validate_aic_and_get_info(aic)
+            if account.aic:
+                agent_info = await agent_registry.validate_aic_and_get_info(
+                    aic, require_challenge=False
+                )
+            else:
+                agent_info = await agent_registry.validate_aic_and_get_info(aic)
             if not agent_info:
                 raise AcmeException(
                     status_code=400,
@@ -905,13 +990,21 @@ async def finalize_order(
                 )
             agent_infos.append(agent_info)
 
+        if account.aic:
+            certificate_service.verify_v21_csr_identity(
+                csr_der, account.aic, agent_infos[0]
+            )
+
         # 更新订单状态为处理中
         order = order_service.update_order_status(order, OrderStatus.PROCESSING)
 
         # 签发证书 - 传递Agent信息用于构造证书DN
         # 现在返回证书列表（每个Agent一张证书）
         certificates = certificate_service.issue_certificate(
-            order, csr_der, agent_infos
+            order,
+            csr_der,
+            agent_infos,
+            v21_identity=bool(account.aic),
         )
 
         base_url = get_configured_acme_base_url(settings)
