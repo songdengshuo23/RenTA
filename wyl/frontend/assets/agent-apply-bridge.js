@@ -3,11 +3,18 @@
 
   var ROUTE = "/agent-apply";
   var ROOT_ID = "agent-apply-bridge";
-  var VERSION = "20260612-registry-align-v2";
+  var VERSION = "20260710-acps-v21-stage4";
   var DEFAULT_SCHEME_NAME = "mtls";
   var DEFAULT_CHALLENGE_URL = "http://10.126.126.8:8888/acps-atr-v2";
+  var DEFAULT_CA_DIRECTORY_URL = "/acps-atr-v2/acme/directory";
+  var EAB_DISPLAY_TTL_MS = 5 * 60 * 1000;
   var renderTimer = null;
   var observer = null;
+  var featureConfig = {
+    acpsV21FrontendEnabled: false,
+    eabIssuanceEnabled: false,
+    caDirectoryUrl: DEFAULT_CA_DIRECTORY_URL
+  };
 
   var categoryOptions = [
     { label: "通用", value: "general" },
@@ -46,10 +53,11 @@
   });
 
   var transportOptions = [
-    { value: "JSONRPC", label: "JSONRPC（平台 Agent 标准）" },
-    { value: "HTTP", label: "HTTP（普通接口）" },
-    { value: "SSE", label: "SSE（事件流）" },
-    { value: "WEBSOCKET", label: "WebSocket（长连接）" }
+    { value: "JSONRPC", label: "JSONRPC（平台 Agent 标准）", protocols: ["02.00", "02.01"] },
+    { value: "HTTP", label: "HTTP（普通接口）", protocols: ["02.00"] },
+    { value: "SSE", label: "SSE（事件流）", protocols: ["02.00"] },
+    { value: "WEBSOCKET", label: "WebSocket（长连接）", protocols: ["02.00"] },
+    { value: "HTTP_JSON", label: "HTTP JSON（ACPs 02.01）", protocols: ["02.01"] }
   ];
 
   function safeJson(value, fallback) {
@@ -58,6 +66,29 @@
     } catch (error) {
       return fallback;
     }
+  }
+
+  function loadFeatureConfig() {
+    if (!window.fetch) return Promise.resolve(featureConfig);
+    return window.fetch("/renta-config", { cache: "no-store" })
+      .then(function (response) {
+        if (!response.ok) throw new Error("config unavailable");
+        return response.json();
+      })
+      .then(function (config) {
+        var nextConfig = {
+          acpsV21FrontendEnabled: config.acpsV21FrontendEnabled === true,
+          eabIssuanceEnabled: config.eabIssuanceEnabled === true,
+          caDirectoryUrl: config.caDirectoryUrl || DEFAULT_CA_DIRECTORY_URL
+        };
+        var changed = nextConfig.acpsV21FrontendEnabled !== featureConfig.acpsV21FrontendEnabled ||
+          nextConfig.eabIssuanceEnabled !== featureConfig.eabIssuanceEnabled ||
+          nextConfig.caDirectoryUrl !== featureConfig.caDirectoryUrl;
+        featureConfig = nextConfig;
+        if (isRoute() && (changed || !document.getElementById(ROOT_ID))) render(true);
+        return featureConfig;
+      })
+      .catch(function () { return featureConfig; });
   }
 
   function isLegacyPricingUrl(url) {
@@ -137,9 +168,22 @@
     return document.querySelector(".main-content") || document.querySelector("#app main");
   }
 
+  function removeBridge() {
+    var root = document.getElementById(ROOT_ID);
+    if (root) {
+      clearEabCredential(root);
+      root.remove();
+    }
+    var host = getHost();
+    if (host) host.dataset.agentApplyBridge = "";
+  }
+
   function scheduleRender(delay) {
     window.clearTimeout(renderTimer);
-    if (!isRoute()) return;
+    if (!isRoute()) {
+      removeBridge();
+      return;
+    }
     renderTimer = window.setTimeout(function () {
       render(false);
     }, delay == null ? 80 : delay);
@@ -195,6 +239,7 @@
   function defaults() {
     var user = getUser();
     return {
+      protocolVersion: featureConfig.acpsV21FrontendEnabled ? "02.01" : "02.00",
       name: "",
       version: "1.0.0",
       description: "",
@@ -213,6 +258,11 @@
       transport: "",
       schemeName: "",
       challengeUrl: "",
+      amqpUrl: "",
+      messageQueueVersion: "rabbitmq:>=4.2",
+      certificateDns: "",
+      certificateIp: "",
+      requestedValidity: "365",
       skillId: "",
       skillName: "",
       skillVersion: "",
@@ -328,8 +378,27 @@
     );
   }
 
+  function protocolTransportOptions(protocolVersion) {
+    return transportOptions.filter(function (item) {
+      return item.protocols.indexOf(protocolVersion || "02.00") >= 0;
+    });
+  }
+
+  function protocolPicker(state) {
+    if (!featureConfig.acpsV21FrontendEnabled) return "";
+    return (
+      '<fieldset class="aab-section aab-protocol-section">' +
+      sectionLegend("00", "协议版本", "Protocol") +
+      '<div class="aab-segmented" role="radiogroup" aria-label="ACPs 协议版本">' +
+      '<label><input type="radio" name="protocolVersion" value="02.01"' + (state.protocolVersion === "02.01" ? " checked" : "") + '><span>ACPs 02.01</span></label>' +
+      '<label><input type="radio" name="protocolVersion" value="02.00"' + (state.protocolVersion === "02.00" ? " checked" : "") + '><span>兼容 02.00</span></label>' +
+      "</div>" +
+      "</fieldset>"
+    );
+  }
+
   function transportSelect(state) {
-    var options = ['<option value="">先填写端点后自动推荐</option>'].concat(transportOptions.map(function (item) {
+    var options = ['<option value="">先填写端点后自动推荐</option>'].concat(protocolTransportOptions(state.protocolVersion).map(function (item) {
       return '<option value="' + item.value + '"' + (state.transport === item.value ? " selected" : "") + ">" + item.label + "</option>";
     })).join("");
     return (
@@ -339,6 +408,40 @@
       '<p class="aab-hint" data-transport-hint>填写端点后平台会自动推荐协议，用户仍可手动调整。</p>' +
       '<p class="aab-error" data-error-for="transport"></p>' +
       "</div>"
+    );
+  }
+
+  function v21Configuration(state) {
+    if (!featureConfig.acpsV21FrontendEnabled) return "";
+    return (
+      '<fieldset class="aab-section" data-protocol-only="02.01">' +
+      sectionLegend("03A", "证书与消息队列", "ACPs 02.01") +
+      '<div class="aab-grid">' +
+      field("certificateDns", "证书 DNS SAN", false, state.certificateDns, 'placeholder="多个域名用逗号或换行分隔"') +
+      field("certificateIp", "证书 IP SAN", false, state.certificateIp, 'placeholder="多个 IP 用逗号或换行分隔"') +
+      field("requestedValidity", "证书有效期（天）", true, state.requestedValidity, 'type="number" min="1" step="1" inputmode="numeric"') +
+      field("amqpUrl", "AMQP Endpoint", false, state.amqpUrl, 'placeholder="amqps://mq.example.com:5671/acps?inbox=inbox_{AIC}"') +
+      field("messageQueueVersion", "消息队列版本", false, state.messageQueueVersion, 'placeholder="rabbitmq:>=4.2"') +
+      "</div>" +
+      "</fieldset>"
+    );
+  }
+
+  function eabPanel() {
+    if (!featureConfig.eabIssuanceEnabled) return "";
+    return (
+      '<section class="aab-section aab-eab-section">' +
+      sectionLegend("EAB", "外部账户绑定", "Certificate") +
+      '<form class="aab-eab-form" novalidate>' +
+      '<div class="aab-eab-row">' +
+      field("eabAic", "已审核 AIC", true, "", 'autocomplete="off" placeholder="输入已审核并激活的 02.01 Agent AIC"') +
+      '<button type="submit" class="aab-btn aab-btn-primary" data-eab-submit>获取 EAB</button>' +
+      "</div>" +
+      '<p class="aab-hint">CA Directory：<a href="' + escapeHtml(featureConfig.caDirectoryUrl) + '" target="_blank" rel="noopener">' + escapeHtml(featureConfig.caDirectoryUrl) + "</a></p>" +
+      '<div class="aab-alert aab-eab-alert" role="status" aria-live="polite" hidden></div>' +
+      '<div class="aab-eab-result" hidden></div>' +
+      "</form>" +
+      "</section>"
     );
   }
 
@@ -364,6 +467,7 @@
       '<p>只填写必要信息。平台会自动补齐账号提供方、协议安全、技能 ID 和 ACS 必需字段。</p>' +
       "</header>" +
       '<form class="aab-form" novalidate>' +
+      protocolPicker(state) +
       '<fieldset class="aab-section">' +
       sectionLegend("01", "基础信息", "Identity") +
       '<div class="aab-grid">' +
@@ -396,11 +500,12 @@
       sectionLegend("03", "端点与安全", "Endpoint") +
       field("endpointUrl", "RPC Endpoint", true, state.endpointUrl, 'type="url" placeholder="例：http://travel-agent-proxy:8099/agents/demo/rpc"') +
       transportSelect(state) +
-      more('<div class="aab-grid">' +
+      '<div data-protocol-only="02.00">' + more('<div class="aab-grid">' +
         field("schemeName", "安全方案名", false, state.schemeName, 'maxlength="64" placeholder="默认使用：mtls"') +
         field("challengeUrl", "CA Challenge URL", false, state.challengeUrl, 'type="url" placeholder="默认使用平台 CA Challenge 服务地址"') +
-        "</div>") +
+        "</div>") + "</div>" +
       "</fieldset>" +
+      v21Configuration(state) +
       '<fieldset class="aab-section">' +
       sectionLegend("04", "技能描述", "Skill") +
       '<div class="aab-grid">' +
@@ -438,6 +543,7 @@
       '<button type="submit" class="aab-btn aab-btn-primary"><span class="aab-btn-text">创建并提交</span><span class="aab-spinner" aria-hidden="true"></span></button>' +
       "</div>" +
       "</form>" +
+      eabPanel() +
       '<div class="aab-result" hidden></div>' +
       "</div>" +
       '<div class="aab-modal" hidden><div class="aab-modal-card" role="dialog" aria-modal="true" aria-label="ACS 预览"><div class="aab-modal-head"><h2>ACS 预览</h2><button type="button" data-action="close-preview">×</button></div><pre></pre></div></div>' +
@@ -446,7 +552,7 @@
   }
 
   function readForm(root) {
-    var form = root.querySelector("form");
+    var form = root.querySelector(".aab-form");
     var fd = new FormData(form);
     var selectedTags = Array.prototype.slice.call(root.querySelectorAll(".aab-chip.is-active"))
       .map(function (item) { return item.dataset.tag; });
@@ -461,14 +567,15 @@
     values.isOntology = !!root.querySelector('input[name="isOntology"]:checked');
     values.streaming = !!root.querySelector('input[name="streaming"]:checked');
     values.notification = !!root.querySelector('input[name="notification"]:checked');
+    values.protocolVersion = values.protocolVersion || "02.00";
 
     var user = getUser();
     values.providerAccountName = displayName(user);
     values.providerAccountEmail = accountEmail(user);
     values.countryCode = normalizeCountry(values.countryCode || "CN");
-    values.transport = values.transport || inferTransport(values.endpointUrl);
+    values.transport = values.transport || inferTransport(values.endpointUrl, values.protocolVersion);
     values.schemeName = values.schemeName || DEFAULT_SCHEME_NAME;
-    values.challengeUrl = values.challengeUrl || DEFAULT_CHALLENGE_URL;
+    if (values.protocolVersion === "02.00") values.challengeUrl = values.challengeUrl || DEFAULT_CHALLENGE_URL;
     values.skillId = values.skillId || skillSlug(values);
     values.skillVersion = values.skillVersion || values.version;
     values.email = values.email || values.providerAccountEmail || accountEmail(user);
@@ -506,11 +613,18 @@
     }
   }
 
-  function inferTransport(endpoint) {
+  function isAmqpUrl(value) {
+    if (!value) return true;
+    return /^amqps?:\/\/[^\s]+$/i.test(value);
+  }
+
+  function inferTransport(endpoint, protocolVersion) {
     if (!endpoint) return "";
     var lower = String(endpoint).toLowerCase();
     if (lower.indexOf("/rpc") >= 0 || lower.indexOf("travel-agent-proxy") >= 0 || lower.indexOf("/agents/") >= 0) return "JSONRPC";
-    if (lower.indexOf("/api/") >= 0 || /\/(chat|invoke|completion|generate)(\/|$)/.test(lower)) return "HTTP";
+    if (lower.indexOf("/api/") >= 0 || /\/(chat|invoke|completion|generate)(\/|$)/.test(lower)) {
+      return protocolVersion === "02.01" ? "HTTP_JSON" : "HTTP";
+    }
     return "JSONRPC";
   }
 
@@ -521,6 +635,7 @@
 
   function validate(values) {
     var errors = {};
+    var isV21 = values.protocolVersion === "02.01";
     if (!values.name) errors.name = "请填写智能体名称";
     if (!values.version) errors.version = "请填写版本";
     if (!values.description) errors.description = "请填写能力描述";
@@ -530,7 +645,16 @@
     if (values.providerUrl && !isUrl(values.providerUrl, false)) errors.providerUrl = "组织主页 URL 格式不正确";
     if (!isUrl(values.endpointUrl, true)) errors.endpointUrl = "请填写可访问的 RPC Endpoint";
     if (!values.transport) errors.transport = "请确认传输协议";
-    if (values.challengeUrl && !isUrl(values.challengeUrl, true)) errors.challengeUrl = "CA Challenge URL 格式不正确";
+    if (isV21 && ["JSONRPC", "HTTP_JSON"].indexOf(values.transport) < 0) errors.transport = "02.01 端点仅支持 JSONRPC 或 HTTP JSON";
+    if (!isV21 && values.challengeUrl && !isUrl(values.challengeUrl, true)) errors.challengeUrl = "CA Challenge URL 格式不正确";
+    if (isV21) {
+      var validity = Number(values.requestedValidity);
+      if (!Number.isInteger(validity) || validity < 1) errors.requestedValidity = "请输入不少于 1 天的整数";
+      if (values.amqpUrl && !isAmqpUrl(values.amqpUrl)) errors.amqpUrl = "请填写 amqp:// 或 amqps:// 地址";
+      if (values.amqpUrl && values.messageQueueVersion && !/^(mqtt|amqp|kafka|redis|rabbitmq):(>=)?\d+\.(\*|\d+(\.\d+)?)( <\d+\.\d+(\.\d+)?)?$/.test(values.messageQueueVersion)) {
+        errors.messageQueueVersion = "消息队列版本格式不正确";
+      }
+    }
     if (!values.skillName) errors.skillName = "请填写当前技能名称";
     if (!values.skillDescription) errors.skillDescription = "请填写技能说明";
     if (tagsFor(values).length === 0) errors.tags = "请至少选择一个技能标签";
@@ -576,6 +700,7 @@
 
   function buildPayload(values) {
     var schemeName = values.schemeName || DEFAULT_SCHEME_NAME;
+    var isV21 = values.protocolVersion === "02.01";
     var now = new Date().toISOString();
     var skillDescription = values.skillDescription || values.description;
     var examples = splitList(values.examples);
@@ -591,11 +716,34 @@
       email: values.email || values.providerAccountEmail || accountEmail(user)
     });
 
+    var securityRequirement = (function () {
+      var item = {};
+      item[schemeName] = [];
+      return item;
+    })();
+    var endPoints = [
+      {
+        url: values.endpointUrl,
+        transport: values.transport || "JSONRPC",
+        security: [securityRequirement]
+      }
+    ];
+    if (isV21 && values.amqpUrl) {
+      endPoints.push({
+        url: values.amqpUrl,
+        transport: "AMQP",
+        security: [securityRequirement]
+      });
+    }
+
+    var messageQueue = isV21 && values.amqpUrl
+      ? splitList(values.messageQueueVersion || "rabbitmq:>=4.2")
+      : [];
     var acs = compactObject({
-      aic: buildAic(values.name),
+      aic: isV21 ? "{AIC}" : buildAic(values.name),
       active: true,
       lastModifiedTime: now,
-      protocolVersion: "02.00",
+      protocolVersion: isV21 ? "02.01" : "02.00",
       name: values.name,
       description: values.description,
       version: values.version,
@@ -604,23 +752,11 @@
       webAppUrl: values.webAppUrl,
       provider: provider,
       securitySchemes: {},
-      endPoints: [
-        {
-          url: values.endpointUrl,
-          transport: values.transport || "JSONRPC",
-          security: [
-            (function () {
-              var item = {};
-              item[schemeName] = [];
-              return item;
-            })()
-          ]
-        }
-      ],
+      endPoints: endPoints,
       capabilities: {
         streaming: !!values.streaming,
         notification: !!values.notification,
-        messageQueue: []
+        messageQueue: messageQueue
       },
       defaultInputModes: values.inputModes,
       defaultOutputModes: values.outputModes,
@@ -639,11 +775,23 @@
       entityUserId: values.entityUserId
     });
 
-    acs.securitySchemes[schemeName] = {
+    var securityScheme = {
       type: "mutualTLS",
-      description: "Agent 调用使用 mTLS 双向认证",
-      "x-caChallengeBaseUrl": values.challengeUrl || DEFAULT_CHALLENGE_URL
+      description: "Agent 调用使用 mTLS 双向认证"
     };
+    if (!isV21) securityScheme["x-caChallengeBaseUrl"] = values.challengeUrl || DEFAULT_CHALLENGE_URL;
+    acs.securitySchemes[schemeName] = securityScheme;
+
+    if (isV21) {
+      var dnsNames = splitList(values.certificateDns);
+      var ipAddresses = splitList(values.certificateIp);
+      acs.certificate = {
+        altNames: {},
+        requestedValidity: Number(values.requestedValidity)
+      };
+      if (dnsNames.length) acs.certificate.altNames.dns = dnsNames;
+      if (ipAddresses.length) acs.certificate.altNames.ip = ipAddresses;
+    }
 
     return {
       name: values.name,
@@ -735,6 +883,125 @@
     return unwrap(data, response);
   }
 
+  async function registryApi(path, options, retried) {
+    var token = window.localStorage.getItem("access_token");
+    if (!token) throw new Error("请先登录 CLIENT 账号");
+    var response = await window.fetch(path, {
+      method: options.method || "GET",
+      headers: Object.assign({
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token
+      }, options.headers || {}),
+      body: options.body == null ? undefined : JSON.stringify(options.body)
+    });
+    if (response.status === 401 && !retried && await refreshToken()) {
+      return registryApi(path, options, true);
+    }
+    var text = await response.text();
+    var data = text ? safeJson(text, text) : null;
+    return unwrap(data, response);
+  }
+
+  function setEabBusy(root, busy) {
+    var button = root.querySelector("[data-eab-submit]");
+    if (!button) return;
+    button.disabled = busy;
+    button.textContent = busy ? "获取中" : "获取 EAB";
+  }
+
+  function showEabAlert(root, type, message) {
+    var alert = root.querySelector(".aab-eab-alert");
+    if (!alert) return;
+    alert.hidden = false;
+    alert.className = "aab-alert aab-eab-alert is-" + type;
+    alert.textContent = message;
+  }
+
+  function clearEabCredential(root) {
+    if (!root) return;
+    window.clearTimeout(root.__eabClearTimer);
+    root.__eabClearTimer = null;
+    root.__eabCredential = null;
+    var box = root.querySelector(".aab-eab-result");
+    if (box) {
+      box.textContent = "";
+      box.hidden = true;
+    }
+  }
+
+  function showEabCredential(root, credential) {
+    clearEabCredential(root);
+    root.__eabCredential = {
+      keyId: String(credential.keyId || ""),
+      macKey: String(credential.macKey || ""),
+      aic: String(credential.aic || ""),
+      expiresAt: String(credential.expiresAt || "")
+    };
+    var box = root.querySelector(".aab-eab-result");
+    if (!box) return;
+    box.hidden = false;
+    box.innerHTML =
+      '<dl>' +
+      '<div><dt>Key ID</dt><dd>' + escapeHtml(root.__eabCredential.keyId) + "</dd></div>" +
+      '<div><dt>MAC Key</dt><dd>' + escapeHtml(root.__eabCredential.macKey) + "</dd></div>" +
+      '<div><dt>AIC</dt><dd>' + escapeHtml(root.__eabCredential.aic) + "</dd></div>" +
+      '<div><dt>失效时间</dt><dd>' + escapeHtml(root.__eabCredential.expiresAt) + "</dd></div>" +
+      "</dl>" +
+      '<div class="aab-result-actions">' +
+      '<button type="button" class="aab-btn aab-btn-primary" data-action="copy-eab">复制凭据</button>' +
+      '<button type="button" class="aab-btn aab-btn-ghost" data-action="clear-eab">清除</button>' +
+      "</div>";
+    root.__eabClearTimer = window.setTimeout(function () {
+      clearEabCredential(root);
+      showEabAlert(root, "warn", "EAB 凭据已从页面清除。");
+    }, EAB_DISPLAY_TTL_MS);
+  }
+
+  async function requestEab(root) {
+    var input = root.querySelector('[name="eabAic"]');
+    var aic = input ? input.value.trim() : "";
+    if (!aic) {
+      showEabAlert(root, "warn", "请输入已审核 Agent 的 AIC。");
+      return;
+    }
+    setEabBusy(root, true);
+    try {
+      var credential = await registryApi("/acps-atr-v2/eab/" + encodeURIComponent(aic), { method: "POST" });
+      if (!credential || !credential.keyId || !credential.macKey) throw new Error("Registry 未返回完整 EAB 凭据");
+      showEabCredential(root, credential);
+      showEabAlert(root, "success", "EAB 凭据已生成，请立即用于 ACME new-account。");
+    } catch (error) {
+      clearEabCredential(root);
+      showEabAlert(root, "error", error.message || "EAB 获取失败");
+    } finally {
+      setEabBusy(root, false);
+    }
+  }
+
+  async function copyEabCredential(root, button) {
+    var credential = root.__eabCredential;
+    if (!credential || !credential.macKey) return;
+    var text = JSON.stringify(credential, null, 2);
+    if (window.navigator.clipboard && window.navigator.clipboard.writeText) {
+      await window.navigator.clipboard.writeText(text);
+    } else {
+      var textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      var copied = document.execCommand("copy");
+      textarea.remove();
+      if (!copied) throw new Error("clipboard unavailable");
+    }
+    if (button) {
+      button.textContent = "已复制";
+      window.setTimeout(function () { button.textContent = "复制凭据"; }, 1600);
+    }
+  }
+
   function resultValue(agent, submitResult) {
     var source = submitResult || agent || {};
     return {
@@ -780,6 +1047,7 @@
   }
 
   function resetForm(root) {
+    clearEabCredential(root);
     var host = root.parentElement;
     if (host) {
       host.dataset.agentApplyBridge = "";
@@ -815,7 +1083,8 @@
     var transport = root.querySelector('[name="transport"]');
     var hint = root.querySelector("[data-transport-hint]");
     if (!endpoint || !transport) return;
-    var inferred = inferTransport(endpoint.value);
+    var protocol = root.querySelector('[name="protocolVersion"]:checked');
+    var inferred = inferTransport(endpoint.value, protocol ? protocol.value : "02.00");
     if (!endpoint.value.trim()) {
       transport.value = "";
       if (hint) hint.textContent = "填写端点后平台会自动推荐协议，用户仍可手动调整。";
@@ -826,6 +1095,26 @@
       transport.dataset.autoValue = inferred;
     }
     if (hint) hint.textContent = "已根据端点推荐：" + transportLabel(transport.value || inferred) + "。";
+  }
+
+  function syncProtocolUi(root) {
+    var selected = root.querySelector('[name="protocolVersion"]:checked');
+    var protocolVersion = selected ? selected.value : "02.00";
+    root.querySelectorAll("[data-protocol-only]").forEach(function (item) {
+      item.hidden = item.dataset.protocolOnly !== protocolVersion;
+    });
+
+    var select = root.querySelector('[name="transport"]');
+    if (select) {
+      var previous = select.value;
+      var options = protocolTransportOptions(protocolVersion);
+      select.innerHTML = '<option value="">先填写端点后自动推荐</option>' + options.map(function (item) {
+        return '<option value="' + item.value + '">' + item.label + "</option>";
+      }).join("");
+      if (options.some(function (item) { return item.value === previous; })) select.value = previous;
+      else select.dataset.userChanged = "";
+    }
+    syncEndpointTransport(root, true);
   }
 
   function syncSkillDefaults(root) {
@@ -846,7 +1135,7 @@
   function hydrate(root) {
     if (!root) return;
     updateCountryMenu(root);
-    syncEndpointTransport(root, false);
+    syncProtocolUi(root);
     syncSkillDefaults(root);
 
     root.addEventListener("click", function (event) {
@@ -870,6 +1159,12 @@
       if (name === "close-preview") closePreview(root);
       if (name === "reset") resetForm(root);
       if (name === "toggle-country") toggleCountryMenu(root);
+      if (name === "clear-eab") clearEabCredential(root);
+      if (name === "copy-eab") {
+        copyEabCredential(root, action).catch(function () {
+          showEabAlert(root, "error", "无法写入剪贴板，请检查浏览器权限。");
+        });
+      }
     });
 
     root.addEventListener("input", function (event) {
@@ -884,13 +1179,14 @@
 
     root.addEventListener("change", function (event) {
       if (event.target && event.target.name === "transport") event.target.dataset.userChanged = "1";
+      if (event.target && event.target.name === "protocolVersion") syncProtocolUi(root);
     });
 
     document.addEventListener("click", function (event) {
       if (!root.contains(event.target)) toggleCountryMenu(root, false);
     });
 
-    root.querySelector("form").addEventListener("submit", async function (event) {
+    root.querySelector(".aab-form").addEventListener("submit", async function (event) {
       event.preventDefault();
       hideAlert(root);
       var values = readForm(root);
@@ -915,6 +1211,14 @@
         setBusy(root, false);
       }
     });
+
+    var eabForm = root.querySelector(".aab-eab-form");
+    if (eabForm) {
+      eabForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        requestEab(root);
+      });
+    }
   }
 
   function installRouteHooks() {
@@ -929,11 +1233,17 @@
       };
     });
     window.addEventListener("popstate", function () { scheduleRender(120); });
+    window.addEventListener("pagehide", function () {
+      clearEabCredential(document.getElementById(ROOT_ID));
+    });
     document.addEventListener("DOMContentLoaded", function () { scheduleRender(160); });
     window.addEventListener("load", function () { scheduleRender(160); });
 
     observer = new MutationObserver(function () {
-      if (!isRoute()) return;
+      if (!isRoute()) {
+        removeBridge();
+        return;
+      }
       var host = getHost();
       if (!host || !host.querySelector("#" + ROOT_ID)) scheduleRender(120);
     });
@@ -942,6 +1252,17 @@
     scheduleRender(200);
   }
 
-  installLegacyPricingGuard();
-  installRouteHooks();
+  if (window.__RENTA_STAGE4_TEST__ === true) {
+    window.__RenTAAgentApplyTest = {
+      buildPayload: buildPayload,
+      validate: validate,
+      inferTransport: inferTransport,
+      protocolTransportOptions: protocolTransportOptions,
+      splitList: splitList
+    };
+  } else {
+    installLegacyPricingGuard();
+    installRouteHooks();
+    loadFeatureConfig();
+  }
 })();

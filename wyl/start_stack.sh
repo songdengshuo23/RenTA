@@ -152,6 +152,8 @@ start_frontend() {
   fi
   (
     cd "$dir"
+    export ACPS_FRONTEND_V21_ENABLED="${ACPS_FRONTEND_V21_ENABLED:-false}"
+    export ACPS_FRONTEND_EAB_ENABLED="${ACPS_FRONTEND_EAB_ENABLED:-false}"
     nohup python3 server.py --host 0.0.0.0 --port 8888 > "$log" 2>&1 &
     echo $! > "$dir/server.pid"
   )

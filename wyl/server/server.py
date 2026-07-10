@@ -3,6 +3,7 @@ wyl Frontend Server (static + reverse proxy)
 ============================================
 """
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -25,15 +26,90 @@ def _proxy_timeout_seconds():
 
 PROXY_TIMEOUT_SECONDS = _proxy_timeout_seconds()
 
-PROXIES = [
-    ("/api/",           "http://localhost:8001/",  False),
-    ("/mode-router/",   "http://localhost:18080/", True),
-    ("/agent-rpc/",     "http://localhost:19090/", True),
-    ("/acps-atr-v2/",   "http://localhost:8001/",  False),
-    ("/acps-dsp-v2/",   "http://localhost:8001/",  False),
-    ("/acps-adp-v2/",   "http://localhost:8005/",  False),
-    ("/acps-atr-v1/",   "http://localhost:8001/",  True),
-]
+REGISTRY_UPSTREAM = os.getenv("WYL_REGISTRY_UPSTREAM", "http://localhost:8001/")
+CA_UPSTREAM = os.getenv("WYL_CA_UPSTREAM", "http://localhost:8003/")
+
+CA_PREFIXES = (
+    "/acps-atr-v2/acme",
+    "/acps-atr-v2/ca",
+    "/acps-atr-v2/crl",
+    "/acps-atr-v2/ocsp",
+)
+
+
+def build_proxies(registry_upstream=REGISTRY_UPSTREAM, ca_upstream=CA_UPSTREAM):
+    return [
+        *((prefix, ca_upstream, False) for prefix in CA_PREFIXES),
+        ("/api/",           registry_upstream,          False),
+        ("/mode-router/",   "http://localhost:18080/", True),
+        ("/agent-rpc/",     "http://localhost:19090/", True),
+        ("/acps-atr-v2/",   registry_upstream,          False),
+        ("/acps-dsp-v2/",   registry_upstream,          False),
+        ("/acps-adp-v2/",   "http://localhost:8005/",  False),
+        ("/acps-atr-v1/",   registry_upstream,          True),
+    ]
+
+
+PROXIES = build_proxies()
+
+
+def _env_bool(name, default=False):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def frontend_config():
+    return {
+        "acpsV21FrontendEnabled": _env_bool("ACPS_FRONTEND_V21_ENABLED"),
+        "eabIssuanceEnabled": _env_bool("ACPS_FRONTEND_EAB_ENABLED"),
+        "caDirectoryUrl": "/acps-atr-v2/acme/directory",
+    }
+
+
+def is_ca_proxy_path(path):
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in CA_PREFIXES)
+
+
+def proxy_for_path(path):
+    for prefix, upstream, strip_prefix in PROXIES:
+        matches = path.startswith(prefix) if prefix.endswith("/") else path == prefix or path.startswith(prefix + "/")
+        if matches:
+            return prefix, upstream, strip_prefix
+    return None
+
+
+def external_origin(headers):
+    forwarded_proto = (headers.get("X-Forwarded-Proto") or "").split(",", 1)[0].strip().lower()
+    scheme = forwarded_proto if forwarded_proto in {"http", "https"} else "http"
+    host = (headers.get("X-Forwarded-Host") or headers.get("Host") or "").split(",", 1)[0].strip()
+    return f"{scheme}://{host}" if host else ""
+
+
+def rewrite_ca_url(value, public_origin):
+    if not value or not public_origin:
+        return value
+    ca_url = urlparse(CA_UPSTREAM)
+    internal_origins = {
+        f"{ca_url.scheme}://{ca_url.netloc}",
+        "http://localhost:8003",
+        "http://127.0.0.1:8003",
+    }
+    rewritten = value
+    for origin in internal_origins:
+        rewritten = rewritten.replace(origin, public_origin)
+    return rewritten
+
+
+def rewrite_ca_body(body, content_type, public_origin):
+    if not body or "json" not in (content_type or "").lower():
+        return body
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return body
+    return rewrite_ca_url(text, public_origin).encode("utf-8")
 
 
 class SPAProxyHandler(SimpleHTTPRequestHandler):
@@ -51,22 +127,62 @@ class SPAProxyHandler(SimpleHTTPRequestHandler):
         self.send_response(204)
         self.end_headers()
 
+    def _serve_config(self):
+        data = json.dumps(frontend_config(), separators=(",", ":")).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _relay_response(self, response, status, ca_route):
+        response_headers = response.headers or {}
+        content_type = response_headers.get("Content-Type") or ""
+        if not ca_route and "text/event-stream" in content_type.lower():
+            self.send_response(status)
+            for key, value in response_headers.items():
+                if key.lower() in ("transfer-encoding", "connection"):
+                    continue
+                self.send_header(key, value)
+            self.end_headers()
+            while True:
+                chunk = response.readline()
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+            return
+
+        body = response.read()
+        public_origin = external_origin(self.headers) if ca_route else ""
+        if ca_route:
+            body = rewrite_ca_body(body, content_type, public_origin)
+
+        self.send_response(status)
+        for key, value in response_headers.items():
+            lower = key.lower()
+            if lower in ("transfer-encoding", "connection"):
+                continue
+            if ca_route and lower == "content-length":
+                continue
+            if ca_route and lower == "location":
+                value = rewrite_ca_url(value, public_origin)
+            self.send_header(key, value)
+        if ca_route:
+            self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _proxy(self, method):
         path = urlparse(self.path).path
-        upstream = None
-        prefix = None
-        strip_prefix = False
-        for pfx, base, strip in PROXIES:
-            if path.startswith(pfx):
-                upstream = base
-                prefix = pfx
-                strip_prefix = strip
-                break
-        if not upstream:
+        route = proxy_for_path(path)
+        if not route:
             sys.stderr.write(f"[wyl] no upstream for path={path!r}\n")
             sys.stderr.flush()
             self.send_error(404, "no upstream for path")
             return
+        prefix, upstream, strip_prefix = route
+        ca_route = is_ca_proxy_path(path)
         if strip_prefix:
             forward_path = path[len(prefix):]  # starts with /
         else:
@@ -86,35 +202,19 @@ class SPAProxyHandler(SimpleHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(content_length) if content_length > 0 else None
         headers = {k: v for k, v in self.headers.items() if k.lower() not in ("host", "content-length")}
+        if ca_route:
+            host = self.headers.get("Host")
+            if host:
+                headers["Host"] = host
+                headers.setdefault("X-Forwarded-Host", host)
+            headers.setdefault("X-Forwarded-Proto", external_origin(self.headers).split(":", 1)[0] or "http")
         req = urllib.request.Request(target, data=body, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=PROXY_TIMEOUT_SECONDS) as resp:
-                self.send_response(resp.status)
-                for k, v in resp.headers.items():
-                    if k.lower() in ("transfer-encoding", "connection"):
-                        continue
-                    self.send_header(k, v)
-                self.end_headers()
-                content_type = (resp.headers.get("Content-Type") or "").lower()
-                if "text/event-stream" in content_type:
-                    while True:
-                        chunk = resp.readline()
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-                        self.wfile.flush()
-                else:
-                    self.wfile.write(resp.read())
+                self._relay_response(resp, resp.status, ca_route)
         except urllib.error.HTTPError as e:
             try:
-                self.send_response(e.code)
-                for k, v in (e.headers or {}).items():
-                    if k.lower() in ("transfer-encoding", "connection"):
-                        continue
-                    self.send_header(k, v)
-                self.end_headers()
-                eb = e.read() if e.fp else b""
-                self.wfile.write(eb)
+                self._relay_response(e, e.code, ca_route)
             except (BrokenPipeError, ConnectionResetError):
                 pass
         except (BrokenPipeError, ConnectionResetError):
@@ -133,7 +233,9 @@ class SPAProxyHandler(SimpleHTTPRequestHandler):
 
     def _route(self, method):
         path = urlparse(self.path).path
-        if any(path.startswith(p) for p, _, _ in PROXIES):
+        if path == "/renta-config":
+            return self._serve_config()
+        if proxy_for_path(path):
             return self._proxy(method)
         fs_path = (DIST / path.lstrip("/")).resolve()
         try:
