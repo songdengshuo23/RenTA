@@ -73,6 +73,17 @@ sds/registry-server/.venv/lib/python3.13/site-packages
 - `/auth` 正常显示登录和注册表单，控制台无错误。
 - 未登录访问 `/agent-apply`，正常跳转到 `/auth?redirect=/agent-apply`。
 
+认证链路使用唯一临时账号完成了真实接口探测，以下接口均返回 `200`：
+
+- 注册、登录和退出。
+- `/api/account/me`。
+- `/api/agent/client`。
+- `/api/points/me/summary`。
+- `/api/points/me/transactions`。
+- `/api/points/me/trend`。
+
+探测未执行充值、提现、Agent 创建等业务写入。临时账号及其角色关联、钱包和积分记录已在 `finally` 清理，清理后 `account_user=17`、`account_user_role_link=19`、`points_wallet=4`、`points_transaction=15`，与探测前基线一致。
+
 ## 5. 数据行数基线
 
 Registry Alembic 版本：`d9e0f1a2b3c4`。
