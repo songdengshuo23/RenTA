@@ -22,7 +22,7 @@
 | 阶段 0：基线冻结与回归清单 | 固定当前平台状态 | 记录当前前端页面、API、数据库表、启动脚本、端口、核心流程 | 不改代码，只做盘点 | 当前功能基线、回归测试清单 |
 | 阶段 1：AIC/ACS 兼容升级（已完成） | 支持 AIC v02.01、ACS v02.01 | 升级 `aic.py`、双 Schema、Agent 申请/审批和 Supervisor 逻辑 | 旧 AIC v02.00 保留 legacy validator；v2.1 写入受开关控制 | 新旧 AIC/ACS 双轨可用；代码提交 `2e9bd07` |
 | 阶段 2：Registry EAB 旁路能力（已完成） | 引入新版 Registry 的 EAB 生成和一次性消费能力 | 增加 `app/eab`、SM4、migration、EAB API 和隔离迁移门禁 | 默认关闭；不覆盖 `points/events/Passport/Supervisor`，旧 `/api` 继续可用 | Registry 支持 EAB；代码提交 `0e8baf4` |
-| 阶段 3：CA 发证链路升级 | 从 HTTP-01 Challenge 切到 EAB | 引入 `eab_verifier.py`、`registry_client.py`，修改 ACME `new-account/new-order/finalize` | Challenge Server 保留 legacy，旧证书继续可用，新证书走 EAB | 新版 EAB 发证链路可用 |
+| 阶段 3：CA 发证链路升级（已完成） | 从 HTTP-01 Challenge 切到 EAB | 引入 `eab_verifier.py`、Registry EAB client，修改 ACME `new-account/new-order/finalize` 和 v2.1 证书 CN/SAN | Challenge Server 保留 legacy，旧 account/证书继续可用，默认开关关闭 | EAB 隔离端到端发证通过；提交 `fed618e`；CA `131 passed` |
 | 阶段 4：前端与网关兼容适配 | 前端支持新版字段但不破坏旧页面 | Agent 申请页支持 ACS 02.01、certificate、AMQP endpoint；网关新增 EAB/CA 分流 | 旧页面、旧接口、旧字段继续兼容；`/api` 不改成强制 `/api/v1` | 前端可申请新版 Agent |
 | 阶段 5：Discovery 适配 | 引入新版 Discovery 查询能力 | 接入 `/acps-adp-v2/discover`，Registry DSP 同步适配 | Mode Router 保留旧 `passports/discovery` fallback | Discovery 优先、Registry fallback |
 | 阶段 6：MQ Inbox / mTLS 增强 | 支持新版 AIP 群组通信 | 引入 mq-auth-server、AMQPS、Inbox endpoint、SDK 调用适配 | Direct RPC / HTTP 调度不删除，失败自动 fallback | 新版 MQ Inbox 可灰度使用 |
@@ -81,7 +81,32 @@ ACPS_AIC_DUAL_READ_ENABLED=true
 - 阶段 1+2 专项 `27 passed`；Registry 全量 `133 passed`，仅保留 6 个阶段 0 既有失败。
 - 总门禁退出码 `0`；生产重启后 HTTP `18/18`。
 
-当前生产仍设置 `ACPS_EAB_ISSUANCE_ENABLED=false`，EAB 路由不注册。下一步进入阶段 3，在 CA 增加 EAB JWS 校验和 account-AIC 绑定，继续保留 HTTP-01 Challenge legacy 链路。阶段 3 详细顺序见阶段 2 完成报告第 7 节。
+当前生产仍设置 `ACPS_EAB_ISSUANCE_ENABLED=false`，EAB 路由不注册。阶段 3 已完成 CA EAB JWS 校验、account-AIC 绑定、无 Challenge Order 和 v2.1 证书签发；生产 CA EAB 准入仍默认关闭。完整记录见 `STAGE3_CA_EAB_UPGRADE.md`。
+
+### 阶段 3 完成状态与阶段 4 入口
+
+2026-07-10 已在远端 `upgrade/acps-v2.1-ca-eab` 分支完成阶段 3，核心代码提交为 `fed618e70b9686942f54bc091838e1b6b36c76fc`。
+
+已完成：
+
+- EAB `HS256` JWS 校验、Registry 一次性消费和 `acme_accounts.aic` 持久化。
+- EAB account 的 identifier-AIC 限制、valid Authorization、ready Order 和无 HTTP-01 签发。
+- finalize 阶段的 Registry ACS、CSR `CN=AIC` 和 `URI:acps://AIC` 校验。
+- v2.1 证书的裸 AIC CN、ACS DNS/IP SAN 和有效期裁剪；legacy 证书路径不变。
+- CA SQLite 迁移 `d4e5f6a7b8c9`，23 条旧证书在 upgrade/downgrade/re-upgrade 和生产迁移中保持不变。
+- 真实隔离 Registry/CA E2E：`new-account=201 -> order=ready -> finalize=valid`，EAB 重放返回 400。
+- 阶段 3 专项 `12 passed`，CA 全量 `131 passed`，总门禁退出码 `0`，HTTP `18/18`。
+
+生产运行态：
+
+```text
+ACPS_CA_EAB_ENABLED=false
+ACPS_CHALLENGE_LEGACY_ENABLED=true
+ACPS_EAB_ISSUANCE_ENABLED=false
+alembic_version=d4e5f6a7b8c9
+```
+
+下一步进入阶段 4：在 `wyl/frontend` 增加 ACS 02.01 certificate/AMQP 表单与 EAB 申请流程，在 `wyl/server/server.py` 增加 Registry EAB 和 CA 路由转发，但保留旧页面、旧 `/api`、积分、事件、Passport 和 Supervisor。阶段 4 详细顺序见阶段 3 完成报告第 7 节。
 
 ### 远端已联通后的实际基线与整理结果
 
