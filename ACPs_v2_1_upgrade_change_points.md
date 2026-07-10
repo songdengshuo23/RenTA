@@ -24,7 +24,7 @@
 | 阶段 2：Registry EAB 旁路能力（已完成） | 引入新版 Registry 的 EAB 生成和一次性消费能力 | 增加 `app/eab`、SM4、migration、EAB API 和隔离迁移门禁 | 默认关闭；不覆盖 `points/events/Passport/Supervisor`，旧 `/api` 继续可用 | Registry 支持 EAB；代码提交 `0e8baf4` |
 | 阶段 3：CA 发证链路升级（已完成） | 从 HTTP-01 Challenge 切到 EAB | 引入 `eab_verifier.py`、Registry EAB client，修改 ACME `new-account/new-order/finalize` 和 v2.1 证书 CN/SAN | Challenge Server 保留 legacy，旧 account/证书继续可用，默认开关关闭 | EAB 隔离端到端发证通过；提交 `fed618e`；CA `131 passed` |
 | 阶段 4：前端与网关兼容适配（已完成） | 前端支持新版字段但不破坏旧页面 | Agent 申请页支持 ACS 02.01、certificate、AMQP endpoint；网关新增 EAB/CA 分流和外部 URL 重写 | 新前端/EAB 默认关闭；旧 02.00、`/api`、Registry 路径不变 | 双轨前端与网关已完成；提交 `c467b00` |
-| 阶段 5：Discovery 适配 | 引入新版 Discovery 查询能力 | 接入 `/acps-adp-v2/discover`，Registry DSP 同步适配 | Mode Router 保留旧 `passports/discovery` fallback | Discovery 优先、Registry fallback |
+| 阶段 5：Discovery 适配（已完成） | 引入新版 Discovery 查询能力 | 适配 `/acps-adp-v2/discover`、Registry DSP 同步和新响应结构 | 默认关闭 Discovery 主链路；保留 Registry Passport fallback 和 Direct RPC/HTTP | 双轨及真实回退已验证；提交 `230ccc4` |
 | 阶段 6：MQ Inbox / mTLS 增强 | 支持新版 AIP 群组通信 | 引入 mq-auth-server、AMQPS、Inbox endpoint、SDK 调用适配 | Direct RPC / HTTP 调度不删除，失败自动 fallback | 新版 MQ Inbox 可灰度使用 |
 | 阶段 7：全量回归与灰度上线 | 确认升级不影响既有功能 | 跑页面、API、数据、发证、编排、积分、事件回归 | 发现问题关闭对应开关回滚 | 可上线版本与回滚方案 |
 
@@ -123,6 +123,29 @@ alembic_version=d4e5f6a7b8c9
 - 总门禁：HTTP `18/18`、Registry `133 passed`、CA `131 passed`、Challenge `4 passed`、Mode Router `42 + 1 + 11 passed`。
 
 生产未启用 v2.1 前端和 EAB，旧页面与旧 API 行为不变；新增 CA Directory 经 8888 真实验证通过。下一步进入阶段 5：适配 Discovery v2.1 与 Mode Router 响应解析，采用“新版 Discovery 优先、Registry Passport fallback”，阶段 5 不切换 MQ 执行链路。
+
+### 阶段 5 完成状态与阶段 6 入口
+
+2026-07-10 已在远端 `upgrade/acps-v2.1-discovery-router` 分支完成阶段 5，核心代码提交为 `230ccc4d713f8cdce2408802bdf2d87784bb8407`，完整记录见 `STAGE5_DISCOVERY_ROUTER_UPGRADE.md`。
+
+已完成：
+
+- 现有 Discovery 保真支持 v2.1 `agents`/`acsMap`/`routes`/`agentGroups`/`forwardChain`。
+- Registry DSP/ATR fallback 保留全部 endpoint、`protocolVersion`、certificate 和默认模式。
+- Mode Router 增加 Discovery-first 开关，异常和空结果都回退 Registry Passport discovery。
+- 当前执行链只选择 HTTP(S) `JSONRPC`/`HTTP_JSON`/`HTTP` endpoint，AMQP 仅保留为阶段 6 元数据。
+- 真实 Registry -> DSP -> Discovery -> Mode Router 链路以及 Discovery 故障 -> Registry 回退链路均已通过。
+- 总门禁：HTTP `18/18`、Registry `133 passed`、CA `131 passed`、Challenge `4 passed`、Mode Router `44 + 1 + 15 passed`，Discovery `4 passed`。
+
+生产运行态：
+
+```text
+ACPS_DISCOVERY_V21_ENABLED=false
+ACPS_DISCOVERY_LEGACY_FALLBACK_ENABLED=true
+Discovery 8005=off
+```
+
+因此现网仍使用 Registry-first 调度，旧编排、积分、回调和 Direct RPC/HTTP 行为不变。下一步进入阶段 6：旁路部署 mq-auth-server 和 RabbitMQ `5671` mTLS，增加默认关闭的 `mq_inbox` 执行分支，同时保留 RabbitMQ `5672`、group bridge/proxy 和 Direct RPC/HTTP fallback。
 
 ### 远端已联通后的实际基线与整理结果
 
@@ -780,7 +803,7 @@ export PYTHONPATH=/home/johnteller/team_ws/sds/registry-server:/home/johnteller/
 
 ## 6. 前端与网关改造清单
 
-**实施状态（2026-07-10）：阶段 4 已完成。** 运行时代码位于远端 `wyl/frontend/assets/agent-apply-bridge.*` 和 `wyl/server/server.py`，提交为 `c467b00`；生产新 UI/EAB 开关保持关闭。详细验证与回滚记录见 `STAGE4_FRONTEND_GATEWAY_UPGRADE.md`。
+**实施状态（2026-07-10）：阶段 4 已完成。** 运行时代码位于远端 `wyl/frontend/assets/agent-apply-bridge.*` 和 `wyl/server/server.py`，提交为 `c467b00`；生产新 UI/EAB 开关保持关闭。详细验证与回滚记录见 `STAGE4_FRONTEND_GATEWAY_UPGRADE.md`。Discovery/Mode Router 阶段 5 也已完成，见第 7、8 节和 `STAGE5_DISCOVERY_ROUTER_UPGRADE.md`。
 
 ### 6.1 前端 API baseURL
 
@@ -876,6 +899,8 @@ passports/runtime-review/schedule
 
 ### 7.2 Discovery 适配
 
+**实施状态（2026-07-10）：阶段 5 已完成，提交 `230ccc4`。**
+
 新版 ADP 返回结构强调：
 
 - `agents`
@@ -889,12 +914,12 @@ passports/runtime-review/schedule
 - `orchestrator/mode_router/adapters.py`
 - `orchestrator/mode_router/discovery_client.py`
 
-**需要修改**
+**已实现**
 
-- 确认 `extract_skills_from_discovery_response()` 完整支持新版 `acsMap`。
-- 过滤 transport：优先 JSONRPC/AMQP，HTTP_JSON 作为普通 API endpoint。
-- 如果 Discovery 返回 AMQP endpoint，group executor 应优先 Inbox。
-- 如果 Discovery 返回 JSONRPC endpoint，仍走 direct RPC fallback。
+- `extract_skills_from_discovery_response()` 完整支持新版 `acsMap`、route-only `agentGroups` 和 `forwardChain`。
+- 保留所有 transport；阶段 5 当前 HTTP 执行顺序为 JSONRPC > HTTP_JSON > HTTP。
+- AMQP endpoint 仅解析和保留，不误交给 HTTP executor；Inbox 执行由阶段 6 实现。
+- Discovery 失败或空结果时使用 Registry Passport fallback。
 
 ### 7.3 Group Executor：Direct RPC -> Inbox 优先
 
@@ -938,6 +963,8 @@ else:
 ---
 
 ## 8. Discovery Server 改造清单
+
+**实施状态（2026-07-10）：阶段 5 已完成增量适配。** 现有 `yhl/ACPs-Discovery-Server` 作为活动服务保留，统一启动中默认关闭；Registry DSP 真实同步、v2.1 响应保真和 Mode Router 回退已通过。
 
 | 当前 | 新版 | 修改动作 |
 |---|---|---|
