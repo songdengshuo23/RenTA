@@ -21,7 +21,7 @@
 |---|---|---|---|---|
 | 阶段 0：基线冻结与回归清单 | 固定当前平台状态 | 记录当前前端页面、API、数据库表、启动脚本、端口、核心流程 | 不改代码，只做盘点 | 当前功能基线、回归测试清单 |
 | 阶段 1：AIC/ACS 兼容升级（已完成） | 支持 AIC v02.01、ACS v02.01 | 升级 `aic.py`、双 Schema、Agent 申请/审批和 Supervisor 逻辑 | 旧 AIC v02.00 保留 legacy validator；v2.1 写入受开关控制 | 新旧 AIC/ACS 双轨可用；代码提交 `2e9bd07` |
-| 阶段 2：Registry 协议能力移植 | 引入新版 Registry 的 EAB/verification/服务拆分能力 | 增加 `app/eab`、必要 migration、EAB API；整理 agent service | 不覆盖 `points/events/Passport/Supervisor`，旧 `/api` 继续可用 | Registry 支持 EAB，但平台业务功能不丢 |
+| 阶段 2：Registry EAB 旁路能力（已完成） | 引入新版 Registry 的 EAB 生成和一次性消费能力 | 增加 `app/eab`、SM4、migration、EAB API 和隔离迁移门禁 | 默认关闭；不覆盖 `points/events/Passport/Supervisor`，旧 `/api` 继续可用 | Registry 支持 EAB；代码提交 `0e8baf4` |
 | 阶段 3：CA 发证链路升级 | 从 HTTP-01 Challenge 切到 EAB | 引入 `eab_verifier.py`、`registry_client.py`，修改 ACME `new-account/new-order/finalize` | Challenge Server 保留 legacy，旧证书继续可用，新证书走 EAB | 新版 EAB 发证链路可用 |
 | 阶段 4：前端与网关兼容适配 | 前端支持新版字段但不破坏旧页面 | Agent 申请页支持 ACS 02.01、certificate、AMQP endpoint；网关新增 EAB/CA 分流 | 旧页面、旧接口、旧字段继续兼容；`/api` 不改成强制 `/api/v1` | 前端可申请新版 Agent |
 | 阶段 5：Discovery 适配 | 引入新版 Discovery 查询能力 | 接入 `/acps-adp-v2/discover`，Registry DSP 同步适配 | Mode Router 保留旧 `passports/discovery` fallback | Discovery 优先、Registry fallback |
@@ -65,7 +65,23 @@ ACPS_LEGACY_API_ENABLED=true
 ACPS_AIC_DUAL_READ_ENABLED=true
 ```
 
-下一步进入阶段 2，只移植 Registry EAB 生成/一次性消费能力和新增表。阶段 2 不切换 CA、不删除 Challenge、不修改积分、事件、Passport、Supervisor 和旧 `/api`。阶段 2 的首个提交应先增加 `ACPS_EAB_ISSUANCE_ENABLED=false` 与 migration 测试，再增加 EAB API；详细顺序见阶段 1 完成报告第 6 节。
+阶段 2 已按上述边界完成：只移植 Registry EAB 生成/一次性消费能力和新增表，没有切换 CA、删除 Challenge 或修改积分、事件、Passport、Supervisor 和旧 `/api`。实施记录见阶段 1 完成报告第 6 节和阶段 2 完成报告。
+
+### 阶段 2 完成状态与阶段 3 入口
+
+2026-07-10 已在远端主线完成阶段 2，分支为 `upgrade/acps-v2.1-registry-eab`，代码提交为 `0e8baf4de43e51f215d656a27afff802d6310894`。完整实现、数据库迁移、测试、部署和回滚记录见 `STAGE2_REGISTRY_EAB_UPGRADE.md`。
+
+已完成：
+
+- EAB Credential 模型、SM4 密文存储、用户签发 API 和内部一次性消费 API。
+- Agent 所有权、审批状态、active 状态和 ACS/AIC v02.01 限制。
+- PostgreSQL `FOR UPDATE` 并发消费保护、过期和重复消费处理。
+- Alembic `f1a2b3c4d5e6` 纯新增表 migration。
+- 生产库 Alembic 漂移已在副本验证后完成对账，生产业务表数据未变化，EAB 表为空。
+- 阶段 1+2 专项 `27 passed`；Registry 全量 `133 passed`，仅保留 6 个阶段 0 既有失败。
+- 总门禁退出码 `0`；生产重启后 HTTP `18/18`。
+
+当前生产仍设置 `ACPS_EAB_ISSUANCE_ENABLED=false`，EAB 路由不注册。下一步进入阶段 3，在 CA 增加 EAB JWS 校验和 account-AIC 绑定，继续保留 HTTP-01 Challenge legacy 链路。阶段 3 详细顺序见阶段 2 完成报告第 7 节。
 
 ### 远端已联通后的实际基线与整理结果
 
