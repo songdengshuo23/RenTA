@@ -10,6 +10,22 @@ from urllib.parse import urlparse
 from app.core.config import settings
 logger = logging.getLogger(__name__)
 
+ACS_PROTOCOL_V0200 = "02.00"
+ACS_PROTOCOL_V0201 = "02.01"
+SUPPORTED_ACS_PROTOCOL_VERSIONS = (ACS_PROTOCOL_V0200, ACS_PROTOCOL_V0201)
+ACS_SCHEMA_FILES = {
+    ACS_PROTOCOL_V0200: "acsSchema.json",
+    ACS_PROTOCOL_V0201: "acsSchema-v02.01.json",
+}
+
+_TRANSPORT_SCHEME_MAP = {
+    "AMQP": {"amqp", "amqps"},
+    "GRPC": {"grpc", "grpcs", "http", "https"},
+    "HTTP_JSON": {"http", "https"},
+    "JSONRPC": {"http", "https"},
+    "REST": {"http", "https"},
+}
+
 
 def is_url_reachable(url, expected_status_code=None):
     try:
@@ -26,14 +42,15 @@ def is_url_reachable(url, expected_status_code=None):
         return False
     
 
-def check_url_format(url):
-    # Basic check for URL format
+def check_url_format(url, transport=None):
     try:
         parsed_url = urlparse(url)
-        if parsed_url.scheme in ["http", "https"] and parsed_url.netloc:
-            return True
-        else:
+        if not parsed_url.scheme or not parsed_url.netloc:
             return False
+        allowed_schemes = _TRANSPORT_SCHEME_MAP.get(str(transport or "").upper())
+        if allowed_schemes and parsed_url.scheme not in allowed_schemes:
+            return False
+        return True
     except Exception as e:
         logger.info(f"URL parsing error: {url}, error: {e}")
         return False
@@ -96,6 +113,52 @@ def is_valid_json(json_string):
         return False
     
 
+def get_acs_protocol_version(acs: str | dict) -> str:
+    instance = acs if isinstance(acs, dict) else json.loads(acs)
+    protocol_version = instance.get("protocolVersion")
+    if protocol_version not in SUPPORTED_ACS_PROTOCOL_VERSIONS:
+        raise AgentException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_name=AgentError.INVALID_ACS,
+            error_msg=(
+                "Unsupported ACS protocolVersion: "
+                f"{protocol_version!r}; expected one of "
+                f"{', '.join(SUPPORTED_ACS_PROTOCOL_VERSIONS)}"
+            ),
+            input_params={"protocolVersion": protocol_version},
+        )
+    return protocol_version
+
+
+def get_acs_schema_path(protocol_version: str) -> str:
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(base_dir, "app/agent", ACS_SCHEMA_FILES[protocol_version])
+
+
+def _validate_schema(instance: dict, acs: str | dict, protocol_version: str) -> None:
+    schema_path = get_acs_schema_path(protocol_version)
+    if not os.path.exists(schema_path):
+        raise AgentException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            error_name=AgentError.INVALID_ACS,
+            error_msg=f"ACS schema file missing: {os.path.basename(schema_path)}",
+            input_params={"protocolVersion": protocol_version},
+        )
+
+    with open(schema_path, "r", encoding="utf-8") as f:
+        schema = json.load(f)
+    try:
+        jsonValidate(instance=instance, schema=schema)
+    except ValidationError as e:
+        logger.error(f"ACS validation error: {e.message}")
+        raise AgentException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_name=AgentError.INVALID_ACS,
+            error_msg=f"Json path: [ {e.json_path} ]; Error message: [ {e.message} ]",
+            input_params={"acs": acs},
+        )
+
+
 def validate(acs: str | dict):
     if acs is None or (isinstance(acs, str) and not is_valid_json(acs)) or (isinstance(acs, dict) and not acs):
         raise AgentException(
@@ -105,74 +168,58 @@ def validate(acs: str | dict):
             input_params={"acs": str(acs)},
         )
 
-    # Locate acsSchema.json in the project root (assuming 3 levels up from app/agent/api.py)
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    schema_path = os.path.join(base_dir, "app/agent/acsSchema.json")
-
-    if os.path.exists(schema_path):
-        with open(schema_path, "r", encoding="utf-8") as f:
-            schema = json.load(f)
-        try:
-            if isinstance(acs, str):
-                instance = json.loads(acs)
-            else:
-                instance = acs
-            jsonValidate(instance=instance, schema=schema)
-        except ValidationError as e:
-            logger.error(f"ACS validation error: {e.message}")
-            raise AgentException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                error_name=AgentError.INVALID_ACS,
-                error_msg=f"Json path: [ {e.json_path} ]; Error message: [ {e.message} ]",
-                input_params={"acs": acs},
-            )
-    
-    # Additional custom validations
     instance = acs if isinstance(acs, dict) else json.loads(acs)
-    security_schemes = instance.get("securitySchemes")
-    mTllsChallengeBaseUrls = {} # To check with endpoints later
-    x_caChallenge_base_url = None
-    
-    # Validate security schemes
+    protocol_version = get_acs_protocol_version(instance)
+    _validate_schema(instance, acs, protocol_version)
+
+    security_schemes = instance.get("securitySchemes") or {}
+    mutual_tls_scheme_names = set()
+    legacy_challenge_urls = set()
+
     for schema_name, schema in security_schemes.items():
         schema_type = schema.get("type")
-        if schema_type == "mutualTLS":
-            x_caChallenge_base_url = schema.get("x-caChallengeBaseUrl")
-            # 1. must be valid URL format
-            if not check_url_format(x_caChallenge_base_url):
+        if schema_type != "mutualTLS":
+            continue
+
+        mutual_tls_scheme_names.add(schema_name)
+        challenge_url = schema.get("x-caChallengeBaseUrl")
+        if protocol_version == ACS_PROTOCOL_V0200:
+            if not isinstance(challenge_url, str) or not check_url_format(
+                challenge_url, "HTTP_JSON"
+            ):
                 raise AgentException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     error_name=AgentError.INVALID_ACS,
                     error_msg=f"x-caChallengeBaseUrl format: {schema_name}",
                     input_params={"acs": acs},
                 )
-            # 2. must be present (checked by json schema already)
-            # 3. must be reachable
-            challengeBaseUrlValid, err = check_ca_challenge_base_url(x_caChallenge_base_url)
-            if not challengeBaseUrlValid:
+            challenge_url_valid, err = check_ca_challenge_base_url(challenge_url)
+            if not challenge_url_valid:
                 raise AgentException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     error_name=AgentError.INVALID_ACS,
                     error_msg=f"x-caChallengeBaseUrl: {err}",
                     input_params={"acs": acs},
                 )
-            mTllsChallengeBaseUrl = x_caChallenge_base_url
-            # Remove trailing '/' for later comparison
-            if mTllsChallengeBaseUrl.endswith("/"):
-                mTllsChallengeBaseUrl = mTllsChallengeBaseUrl[:-1]
-            mTllsChallengeBaseUrls[schema_name] = mTllsChallengeBaseUrl
+            legacy_challenge_urls.add(challenge_url.rstrip("/"))
+        elif challenge_url is not None and not check_url_format(
+            challenge_url, "HTTP_JSON"
+        ):
+            raise AgentException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_name=AgentError.INVALID_ACS,
+                error_msg=f"x-caChallengeBaseUrl format: {schema_name}",
+                input_params={"acs": acs},
+            )
 
-    # Validate endpoints: 
     endpoints = instance.get("endPoints")
     if endpoints:
         for endpoint in endpoints:
-            # Validate endpoint: 
-            # 1. must use mTLS security scheme in any of endPoint
-            securities = endpoint.get("security")
+            securities = endpoint.get("security") or []
             mtls_used = False
             for security in securities:
                 for scr_name in security.keys():
-                    if scr_name in mTllsChallengeBaseUrls.keys():
+                    if scr_name in mutual_tls_scheme_names:
                         mtls_used = True
                         break
                 if mtls_used:
@@ -184,20 +231,17 @@ def validate(acs: str | dict):
                     error_msg=f"endPoint must use mutualTLS security scheme",
                     input_params={"acs": acs},
                 )
-            # 2. url is required in endpoint (checked by json schema already)
             ep_url = endpoint.get("url")
-            # 3. url must be valid format
-            if not check_url_format(ep_url):
+            if not isinstance(ep_url, str) or not check_url_format(
+                ep_url, endpoint.get("transport")
+            ):
                 raise AgentException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     error_name=AgentError.INVALID_ACS,
                     error_msg=f"endpoint URL format: {endpoint.get('url', '')}",
                     input_params={"acs": acs},
                 )
-            # 4. x-caChallengeBaseUrl must not appear in any endPoint
-            if ep_url.endswith("/"):
-                ep_url = ep_url[:-1]
-            if ep_url in mTllsChallengeBaseUrls.values():
+            if ep_url.rstrip("/") in legacy_challenge_urls:
                 raise AgentException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     error_name=AgentError.INVALID_ACS,
@@ -205,13 +249,34 @@ def validate(acs: str | dict):
                     input_params={"acs": acs},
                 )
 
-    # webAppUrl validation:
     web_app_url = instance.get("webAppUrl")
-    # webAppUrl and endpoints cannot both be absent
     if web_app_url is None and (endpoints is None or len(endpoints) == 0):
         raise AgentException(
             status_code=status.HTTP_400_BAD_REQUEST,
             error_name=AgentError.INVALID_ACS,
             error_msg=f"Either webAppUrl or endpoints must be present in ACS",
             input_params={"acs": acs},
+        )
+
+
+def validate_for_write(acs: str | dict) -> None:
+    """Validate a new/updated ACS and enforce protocol write switches."""
+    validate(acs)
+    protocol_version = get_acs_protocol_version(acs)
+    if protocol_version == ACS_PROTOCOL_V0201 and not settings.ACPS_V21_ENABLED:
+        raise AgentException(
+            status_code=status.HTTP_409_CONFLICT,
+            error_name=AgentError.INVALID_ACS,
+            error_msg="ACPs v2.1 writes are disabled",
+            input_params={"protocolVersion": protocol_version},
+        )
+    if (
+        protocol_version == ACS_PROTOCOL_V0200
+        and not settings.ACPS_LEGACY_API_ENABLED
+    ):
+        raise AgentException(
+            status_code=status.HTTP_409_CONFLICT,
+            error_name=AgentError.INVALID_ACS,
+            error_msg="Legacy ACS writes are disabled",
+            input_params={"protocolVersion": protocol_version},
         )

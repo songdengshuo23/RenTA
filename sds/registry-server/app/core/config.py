@@ -102,6 +102,19 @@ class Settings(BaseSettings):
         "CA_CHALLENGE_STATUS_PATH_TYPE", "parent"
     )
 
+    # ACPs v2.1 compatibility switches. Defaults preserve the current platform.
+    ACPS_V21_ENABLED: bool = os.getenv("ACPS_V21_ENABLED", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    ACPS_LEGACY_API_ENABLED: bool = os.getenv(
+        "ACPS_LEGACY_API_ENABLED", "true"
+    ).lower() in ("true", "1", "yes")
+    ACPS_AIC_DUAL_READ_ENABLED: bool = os.getenv(
+        "ACPS_AIC_DUAL_READ_ENABLED", "true"
+    ).lower() in ("true", "1", "yes")
+
     AIC_CRC_SALT: str = os.getenv("AIC_CRC_SALT", "0x0000ABCD")
 
     @field_validator("AIC_CRC_SALT", mode="before")

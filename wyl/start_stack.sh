@@ -42,6 +42,9 @@ start_registry() {
     export REGISTRY_SERVICE_TOKEN="local-dev-token"
     export DSP_SERVICE_TOKEN="local-dsp-token"
     export CA_CHALLENGE_STATUS_PATH_TYPE="parent"
+    export ACPS_V21_ENABLED="false"
+    export ACPS_LEGACY_API_ENABLED="true"
+    export ACPS_AIC_DUAL_READ_ENABLED="true"
     export PYTHONPATH="$dir:$dir/.py312deps:$dir/.venv/lib/python3.13/site-packages"
     nohup python3 -u main.py > "$log" 2>&1 &
     echo $! > "$dir/logs/server.wyl-restart.pid"

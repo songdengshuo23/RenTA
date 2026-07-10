@@ -533,11 +533,16 @@ def _schema_check(acs: Dict[str, Any]) -> Check:
     # schema 校验复用 Registry 已有的 ACS JSON Schema。
     # 这样 Supervisor 和 Registry 对“合法 ACS”的判断保持一致，避免出现注册通过但审查失败的标准漂移。
     # 校验异常不会向外抛出，而是转换成 check 结果，便于统一汇总到 supervisor_review。
+    schema_filename = (
+        "acsSchema-v02.01.json"
+        if acs.get("protocolVersion") == "02.01"
+        else "acsSchema.json"
+    )
     schema_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         "app",
         "agent",
-        "acsSchema.json",
+        schema_filename,
     )
     try:
         with open(schema_path, "r", encoding="utf-8") as file:
@@ -562,7 +567,7 @@ def _schema_check(acs: Dict[str, Any]) -> Check:
             "P0",
             60,
             [f"ACS schema file could not be loaded: {exc}"],
-            ["确认 registry-server 部署包含 app/agent/acsSchema.json。"],
+            [f"确认 registry-server 部署包含 app/agent/{schema_filename}。"],
             ["schema_file_missing"],
         )
 
@@ -572,7 +577,7 @@ def _schema_check(acs: Dict[str, Any]) -> Check:
         "pass",
         "P0",
         100,
-        ["ACS validates against registry acsSchema.json."],
+        [f"ACS validates against registry {schema_filename}."],
     )
 
 
@@ -624,6 +629,7 @@ def _security_schemes_check(acs: Dict[str, Any]) -> Check:
 
 def _mutual_tls_checks(acs: Dict[str, Any]) -> List[Check]:
     security_schemes = acs.get("securitySchemes") or {}
+    challenge_required = acs.get("protocolVersion") != "02.01"
     mtls = {
         name: scheme
         for name, scheme in security_schemes.items()
@@ -638,7 +644,10 @@ def _mutual_tls_checks(acs: Dict[str, Any]) -> List[Check]:
                 "P0",
                 0,
                 ["No mutualTLS security scheme was declared."],
-                ["声明 mutualTLS security scheme 并配置 x-caChallengeBaseUrl。"],
+                [
+                    "声明 mutualTLS security scheme"
+                    + (" 并配置 x-caChallengeBaseUrl。" if challenge_required else "。")
+                ],
                 ["missing_mtls"],
             )
         ]
@@ -653,9 +662,11 @@ def _mutual_tls_checks(acs: Dict[str, Any]) -> List[Check]:
             [f"mutualTLS schemes: {', '.join(sorted(mtls.keys()))}."],
         )
     ]
-    missing_challenge = [
-        name for name, scheme in mtls.items() if not scheme.get("x-caChallengeBaseUrl")
-    ]
+    missing_challenge = (
+        [name for name, scheme in mtls.items() if not scheme.get("x-caChallengeBaseUrl")]
+        if challenge_required
+        else []
+    )
     if missing_challenge:
         checks.append(
             _check(
@@ -673,6 +684,14 @@ def _mutual_tls_checks(acs: Dict[str, Any]) -> List[Check]:
             )
         )
     else:
+        evidence = (
+            ["All mutualTLS schemes declare x-caChallengeBaseUrl."]
+            if challenge_required
+            else [
+                "ACS 02.01 declares mutualTLS; x-caChallengeBaseUrl is not required "
+                "because certificate enrollment uses EAB."
+            ]
+        )
         checks.append(
             _check(
                 "mtls_challenge_base_url_present",
@@ -680,7 +699,7 @@ def _mutual_tls_checks(acs: Dict[str, Any]) -> List[Check]:
                 "pass",
                 "P0",
                 100,
-                ["All mutualTLS schemes declare x-caChallengeBaseUrl."],
+                evidence,
             )
         )
     return checks
@@ -735,15 +754,17 @@ def _endpoint_checks(acs: Dict[str, Any]) -> List[Check]:
     endpoint_challenge_collisions: List[str] = []
     private_endpoints: List[str] = []
     invalid_urls: List[str] = []
+    allow_amqp = acs.get("protocolVersion") == "02.01"
 
     for endpoint in endpoints:
         # 逐个 endpoint 做细粒度检查：
-        # 1. URL 必须是合法的 http/https 地址。
+        # 1. URL 必须匹配 transport；02.01 AMQP 使用 amqp/amqps，其余保持 http/https。
         # 2. endpoint URL 不能和 x-caChallengeBaseUrl 完全相同，避免业务入口与 CA challenge 地址混用。
         # 3. private IP/localhost 先给 warning，因为测试环境可能需要，但生产发布前必须人工确认。
         # 4. endpoint.security 引用必须存在于 securitySchemes 中，并且至少包含 mutualTLS。
         url = endpoint.get("url")
-        if not _valid_url(url):
+        transport = endpoint.get("transport")
+        if not _valid_endpoint_url(url, transport, allow_amqp=allow_amqp):
             invalid_urls.append(str(url))
             continue
         normalized_url = _normalized_url(url)
@@ -769,7 +790,10 @@ def _endpoint_checks(acs: Dict[str, Any]) -> List[Check]:
                 "P0",
                 0,
                 ["Invalid endpoint URLs: " + ", ".join(invalid_urls)],
-                ["修复 endpoint.url，必须是合法 http/https URL。"],
+                [
+                    "修复 endpoint.url：HTTP 类 transport 使用 http/https，"
+                    "ACS 02.01 AMQP 使用 amqp/amqps。"
+                ],
                 ["invalid_endpoint_url"],
             )
         )
@@ -4599,6 +4623,16 @@ def _valid_url(url: Any) -> bool:
         return False
     parsed = urlparse(url)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _valid_endpoint_url(url: Any, transport: Any, *, allow_amqp: bool = False) -> bool:
+    if not isinstance(url, str):
+        return False
+    parsed = urlparse(url)
+    allowed_schemes = {"http", "https"}
+    if allow_amqp and str(transport or "").upper() == "AMQP":
+        allowed_schemes = {"amqp", "amqps"}
+    return parsed.scheme in allowed_schemes and bool(parsed.netloc)
 
 
 def _normalized_url(url: Any) -> Optional[str]:

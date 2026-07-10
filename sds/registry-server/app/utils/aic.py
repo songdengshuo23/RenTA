@@ -24,6 +24,10 @@ AIC_PREFIX = "1.2.156.3088"
 # 第 9 级：AIC 版本号（1~Z，Base36）
 PROTOCOL_VERSION = "1"
 
+AIC_SPEC_V0200 = "02.00"
+AIC_SPEC_V0201 = "02.01"
+SUPPORTED_AIC_SPEC_VERSIONS = (AIC_SPEC_V0200, AIC_SPEC_V0201)
+
 # 第 5/6 级：注册服务商/供应商标识（1~ZZZZZZ）。为兼容旧代码，这里沿用原常量名。
 MANAGER_CODE = "0001"  # ARSP
 PROVIDER_CODE = "00001"  # Vendor
@@ -168,27 +172,31 @@ def calculate_aic_checksum(body_1_9: str) -> str:
     return _base36_encode(crc, 4)
 
 
-def validate_aic(aic: str, *, expected_prefix: str = AIC_PREFIX) -> bool:
-    """验证 ACPs-spec-AIC-v02.00 AIC。
-
-    规则：
-    - 10 段（以 '.' 分隔）；
-    - 1~4 段为数字（OID 前缀）；
-    - 5~8 段为 Base36（0-9,A-Z），长度分别为 1~6,1~6,1~9,1~9；
-    - 9 段为 Base36 单字符；
-    - 10 段为固定 4 位 Base36；
-        - CRC16 对 1~9 段拼接字符串（含 '.'）计算，大小写不敏感；
-            本实现会在该字符串 ASCII 字节末尾追加 salt_bytes 后再计算 CRC。
-    """
+def _validate_common_parts(aic: str, expected_prefix: str) -> Optional[List[str]]:
     parts = _split_aic(aic)
     if len(parts) != 10:
-        return False
+        return None
 
     prefix_parts = expected_prefix.split(".") if expected_prefix else []
     if prefix_parts and parts[: len(prefix_parts)] != prefix_parts:
-        return False
+        return None
 
     if not all(_RE_DIGITS.fullmatch(p) for p in parts[:4]):
+        return None
+
+    if not _RE_BASE36_4.fullmatch(parts[9]):
+        return None
+
+    body_1_9 = ".".join(parts[:9])
+    if calculate_aic_checksum(body_1_9) != parts[9]:
+        return None
+    return parts
+
+
+def validate_aic_v0200(aic: str, *, expected_prefix: str = AIC_PREFIX) -> bool:
+    """Validate the legacy v02.00 layout with the version in segment 9."""
+    parts = _validate_common_parts(aic, expected_prefix)
+    if parts is None:
         return False
 
     seg5, seg6, seg7, seg8, seg9, seg10 = parts[4], parts[5], parts[6], parts[7], parts[8], parts[9]
@@ -206,9 +214,99 @@ def validate_aic(aic: str, *, expected_prefix: str = AIC_PREFIX) -> bool:
     if not _RE_BASE36_4.fullmatch(seg10):
         return False
 
-    body_1_9 = ".".join(parts[:9])
-    expected_crc = calculate_aic_checksum(body_1_9)
-    return expected_crc == seg10
+    return True
+
+
+def validate_aic_v0201(aic: str, *, expected_prefix: str = AIC_PREFIX) -> bool:
+    """Validate the v02.01 layout with the version in segment 5."""
+    parts = _validate_common_parts(aic, expected_prefix)
+    if parts is None:
+        return False
+
+    seg5, seg6, seg7, seg8, seg9, seg10 = parts[4], parts[5], parts[6], parts[7], parts[8], parts[9]
+
+    if not (_RE_BASE36.fullmatch(seg5) and len(seg5) == 1):
+        return False
+    if not (_RE_BASE36.fullmatch(seg6) and 1 <= len(seg6) <= 6):
+        return False
+    if not (_RE_BASE36.fullmatch(seg7) and 1 <= len(seg7) <= 6):
+        return False
+    if not (_RE_BASE36.fullmatch(seg8) and 1 <= len(seg8) <= 9):
+        return False
+    if not (_RE_BASE36.fullmatch(seg9) and 1 <= len(seg9) <= 9):
+        return False
+    if not _RE_BASE36_4.fullmatch(seg10):
+        return False
+
+    return True
+
+
+def get_aic_spec_version(
+    aic: str, *, expected_prefix: str = AIC_PREFIX
+) -> Optional[str]:
+    """Return the detected AIC layout; ambiguous external values prefer legacy."""
+    legacy_valid = validate_aic_v0200(aic, expected_prefix=expected_prefix)
+    v21_valid = validate_aic_v0201(aic, expected_prefix=expected_prefix)
+    if legacy_valid and not v21_valid:
+        return AIC_SPEC_V0200
+    if v21_valid and not legacy_valid:
+        return AIC_SPEC_V0201
+    if legacy_valid and v21_valid:
+        parts = _split_aic(aic)
+        if parts[4] == PROTOCOL_VERSION and parts[8] != PROTOCOL_VERSION:
+            return AIC_SPEC_V0201
+        return AIC_SPEC_V0200
+    return None
+
+
+def validate_aic(aic: str, *, expected_prefix: str = AIC_PREFIX) -> bool:
+    """Validate AIC according to the configured dual-read policy."""
+    if settings.ACPS_AIC_DUAL_READ_ENABLED:
+        return validate_aic_v0200(
+            aic, expected_prefix=expected_prefix
+        ) or validate_aic_v0201(aic, expected_prefix=expected_prefix)
+    if settings.ACPS_V21_ENABLED:
+        return validate_aic_v0201(aic, expected_prefix=expected_prefix)
+    return validate_aic_v0200(aic, expected_prefix=expected_prefix)
+
+
+def _resolve_write_spec_version(spec_version: Optional[str]) -> str:
+    selected = spec_version or (
+        AIC_SPEC_V0201 if settings.ACPS_V21_ENABLED else AIC_SPEC_V0200
+    )
+    if selected not in SUPPORTED_AIC_SPEC_VERSIONS:
+        raise ValueError(
+            f"spec_version must be one of {', '.join(SUPPORTED_AIC_SPEC_VERSIONS)}"
+        )
+    return selected
+
+
+def _build_aic_body(
+    spec_version: str,
+    protocol_version: str,
+    manager_code: str,
+    provider_code: str,
+    ontology_serial: str,
+    instance_serial: str,
+) -> str:
+    if spec_version == AIC_SPEC_V0201:
+        return (
+            f"{AIC_PREFIX}.{protocol_version}.{manager_code}.{provider_code}."
+            f"{ontology_serial}.{instance_serial}"
+        )
+    return (
+        f"{AIC_PREFIX}.{manager_code}.{provider_code}.{ontology_serial}."
+        f"{instance_serial}.{protocol_version}"
+    )
+
+
+def _instance_segment_index(aic: str) -> Optional[int]:
+    spec_version = get_aic_spec_version(aic)
+    if spec_version == AIC_SPEC_V0200:
+        return 7
+    if spec_version == AIC_SPEC_V0201:
+        return 8
+    return None
 
 
 def _validate_base36_segment(name: str, value: str, *, min_len: int, max_len: int) -> str:
@@ -237,9 +335,11 @@ def generate_aic(
     protocol_version: str = PROTOCOL_VERSION,
     manager_code: str = MANAGER_CODE,
     provider_code: str = PROVIDER_CODE,
+    *,
+    spec_version: Optional[str] = None,
 ) -> str:
-    """生成实体 AIC（第 8 级实例序列号不为全 0）。"""
-    # 第 9 级版本号：Base36 单字符
+    """Generate an entity AIC using the selected v02.00/v02.01 layout."""
+    selected_spec = _resolve_write_spec_version(spec_version)
     ver = _validate_base36_segment("protocol_version", protocol_version, min_len=1, max_len=1)
     arsp = _validate_base36_segment("manager_code", manager_code, min_len=1, max_len=6)
     vendor = _validate_base36_segment("provider_code", provider_code, min_len=1, max_len=6)
@@ -247,17 +347,20 @@ def generate_aic(
     ontology_serial = _generate_nonzero_base36(b"ONT", DEFAULT_ONTOLOGY_SERIAL_LEN)
     instance_serial = _generate_nonzero_base36(b"INS", DEFAULT_INSTANCE_SERIAL_LEN)
 
-    body_1_9 = f"{AIC_PREFIX}.{arsp}.{vendor}.{ontology_serial}.{instance_serial}.{ver}"
+    body_1_9 = _build_aic_body(
+        selected_spec, ver, arsp, vendor, ontology_serial, instance_serial
+    )
     crc = calculate_aic_checksum(body_1_9)
     return f"{body_1_9}.{crc}"
 
 
 def get_instance_serial(aic: str) -> Optional[str]:
-    """提取第 8 级实例序列号（失败返回 None）。"""
+    """Extract the instance serial from either supported AIC layout."""
     parts = _split_aic(aic)
-    if len(parts) != 10:
+    instance_index = _instance_segment_index(aic)
+    if len(parts) != 10 or instance_index is None:
         return None
-    return parts[7]
+    return parts[instance_index]
 
 
 def is_ontology_aic(aic: str) -> bool:
@@ -288,8 +391,11 @@ def get_ontology_aic_from_entity(entity_aic: str) -> Optional[str]:
     if not validate_aic(entity_aic):
         return None
     parts = _split_aic(entity_aic)
-    instance_serial = parts[7]
-    parts[7] = "0" * len(instance_serial)
+    instance_index = _instance_segment_index(entity_aic)
+    if instance_index is None:
+        return None
+    instance_serial = parts[instance_index]
+    parts[instance_index] = "0" * len(instance_serial)
     body_1_9 = ".".join(parts[:9])
     parts[9] = calculate_aic_checksum(body_1_9)
     return ".".join(parts)
@@ -302,28 +408,36 @@ def generate_entity_aic_from_ontology(ontology_aic: str) -> Optional[str]:
     if not is_ontology_aic(ontology_aic):
         return None
     parts = _split_aic(ontology_aic)
-    # 第 8 级长度沿用本体输入
-    instance_len = len(parts[7])
-    parts[7] = _generate_nonzero_base36(b"ENT", instance_len)
+    instance_index = _instance_segment_index(ontology_aic)
+    if instance_index is None:
+        return None
+    instance_len = len(parts[instance_index])
+    parts[instance_index] = _generate_nonzero_base36(b"ENT", instance_len)
     body_1_9 = ".".join(parts[:9])
     parts[9] = calculate_aic_checksum(body_1_9)
     return ".".join(parts)
 
 
 def get_derived_entity_like_prefix(ontology_aic: str) -> Optional[str]:
-    """用于 DB like 查询的派生实体前缀：'<1..7>.'（失败返回 None）。"""
+    """Return the DB LIKE prefix up to the instance segment."""
     if not validate_aic(ontology_aic):
         return None
     parts = _split_aic(ontology_aic)
-    return ".".join(parts[:7]) + "."
+    instance_index = _instance_segment_index(ontology_aic)
+    if instance_index is None:
+        return None
+    return ".".join(parts[:instance_index]) + "."
 
 
 def generate_ontology_aic(
     protocol_version: str = PROTOCOL_VERSION,
     manager_code: str = MANAGER_CODE,
     provider_code: str = PROVIDER_CODE,
+    *,
+    spec_version: Optional[str] = None,
 ) -> str:
-    """生成本体 AIC（第 8 级实例序列号全为 0）。"""
+    """Generate an ontology AIC using the selected v02.00/v02.01 layout."""
+    selected_spec = _resolve_write_spec_version(spec_version)
     ver = _validate_base36_segment("protocol_version", protocol_version, min_len=1, max_len=1)
     arsp = _validate_base36_segment("manager_code", manager_code, min_len=1, max_len=6)
     vendor = _validate_base36_segment("provider_code", provider_code, min_len=1, max_len=6)
@@ -331,6 +445,8 @@ def generate_ontology_aic(
     ontology_serial = _generate_nonzero_base36(b"ONT", DEFAULT_ONTOLOGY_SERIAL_LEN)
     instance_serial = "0" * DEFAULT_INSTANCE_SERIAL_LEN
 
-    body_1_9 = f"{AIC_PREFIX}.{arsp}.{vendor}.{ontology_serial}.{instance_serial}.{ver}"
+    body_1_9 = _build_aic_body(
+        selected_spec, ver, arsp, vendor, ontology_serial, instance_serial
+    )
     crc = calculate_aic_checksum(body_1_9)
     return f"{body_1_9}.{crc}"

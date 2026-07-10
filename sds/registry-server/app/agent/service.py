@@ -262,7 +262,7 @@ def update_agent_acs_data(agent: Agent, db: Session = None) -> None:
     # 确保 acs_data 是一个字典副本，避免直接修改 agent.acs 引用
     # 这样可以确保比较逻辑的正确性，并且在赋值回 agent.acs 时能触发 SQLAlchemy 的变更检测
     if isinstance(agent.acs, dict):
-        acs_data = agent.acs.copy()
+        acs_data = copy.deepcopy(agent.acs)
     else:
         # 如果不是 dict (例如是字符串)，尝试解析为 dict
         try:
@@ -284,6 +284,12 @@ def update_agent_acs_data(agent: Agent, db: Session = None) -> None:
         if current_aic != agent.aic:
             acs_data["aic"] = agent.aic
             is_acs_changed = True
+
+        for endpoint in acs_data.get("endPoints") or []:
+            endpoint_url = endpoint.get("url")
+            if isinstance(endpoint_url, str) and "{AIC}" in endpoint_url:
+                endpoint["url"] = endpoint_url.replace("{AIC}", agent.aic)
+                is_acs_changed = True
 
     # 检查并更新active字段（布尔值）
     expected_active = agent.is_active
@@ -422,7 +428,7 @@ def get_agents(
 
 
 def create_agent(db: Session, user_id: uuid.UUID, agent_data: Dict[str, Any]) -> Agent:
-    from app.utils.acs import validate as validate_acs
+    from app.utils.acs import validate_for_write as validate_acs
 
     """Create a new agent in draft status"""
     # 首先检查是否有其他用户已经使用了相同的名称
@@ -589,7 +595,7 @@ def update_agent(
         # 如果更新了ACS数据，需要触发同步机制
         acs_updated = False
         if "acs" in agent_data:
-            from app.utils.acs import validate as validate_acs
+            from app.utils.acs import validate_for_write as validate_acs
 
             acs_value = agent_data["acs"]
             # 处理 acs：API 传入的可能是 JSON 字符串，需要转换为 dict（JSONB 类型）
@@ -2352,6 +2358,29 @@ def process_agent_approval(
     return agent
 
 
+def _get_agent_aic_spec_version(agent: Agent) -> str:
+    acs_data = agent.acs
+    if isinstance(acs_data, str):
+        try:
+            acs_data = json.loads(acs_data)
+        except json.JSONDecodeError:
+            acs_data = None
+
+    protocol_version = (
+        acs_data.get("protocolVersion") if isinstance(acs_data, dict) else None
+    )
+    if protocol_version == "02.01":
+        if not settings.ACPS_V21_ENABLED:
+            raise AgentException(
+                status_code=status.HTTP_409_CONFLICT,
+                error_name=AgentError.INVALID_ACS,
+                error_msg="ACPs v2.1 writes are disabled",
+                input_params={"protocolVersion": protocol_version},
+            )
+        return aic.AIC_SPEC_V0201
+    return aic.AIC_SPEC_V0200
+
+
 def generate_aic_for_agent(db: Session, agent: Agent) -> Agent:
     """
     Generate a unique AIC (Agent Identifier Code) for an agent.
@@ -2379,14 +2408,15 @@ def generate_aic_for_agent(db: Session, agent: Agent) -> Agent:
     max_retries = 3
     retry_count = 0
     retry_delay = 0.002  # 2 milliseconds
+    spec_version = _get_agent_aic_spec_version(agent)
 
     while retry_count < max_retries:
         try:
             # Generate AIC if not already generated
             if agent.is_ontology:
-                agent.aic = aic.generate_ontology_aic()
+                agent.aic = aic.generate_ontology_aic(spec_version=spec_version)
             else:
-                agent.aic = aic.generate_aic()
+                agent.aic = aic.generate_aic(spec_version=spec_version)
 
             # Update timestamp with Beijing time
             agent.updated_at = get_beijing_time()
