@@ -4,6 +4,23 @@
 
 本次升级目标不是“用新版 ACPs-community 直接替换现有平台代码”，而是在**保持现有平台功能、入口、接口、数据和编排流程不受影响**的基础上，把 ACPs-community v2.1.0 的协议能力逐步移植进现有系统。
 
+### 当前最终状态（2026-07-11）
+
+阶段 0 至阶段 8 已全部完成。RenTA 当前不只是具备 v2.1 代码能力，线上运行进程也已经正式启用 v2.1：
+
+```text
+ACPS_V21_ENABLED=true
+ACPS_EAB_ISSUANCE_ENABLED=true
+ACPS_CA_EAB_ENABLED=true
+ACPS_FRONTEND_V21_ENABLED=true
+ACPS_FRONTEND_EAB_ENABLED=true
+ACPS_DISCOVERY_V21_ENABLED=true
+ACPS_MQ_AUTH_ENABLED=true
+ACPS_MQ_INBOX_ENABLED=true
+```
+
+旧 API、02.00、Challenge legacy、Registry fallback、RabbitMQ 5672、Direct RPC/HTTP 仍保持开启。当前不再等待灰度，环境变量开关作为生产故障时的模块级回退入口保留。最终运行状态、变量含义和启用后测试结果见 `FINAL_ACPS_V21_UPGRADE_VALIDATION.md`。
+
 ### 一、升级总策略
 
 | 策略 | 说明 |
@@ -27,6 +44,7 @@
 | 阶段 5：Discovery 适配（已完成） | 引入新版 Discovery 查询能力 | 适配 `/acps-adp-v2/discover`、Registry DSP 同步和新响应结构 | 默认关闭 Discovery 主链路；保留 Registry Passport fallback 和 Direct RPC/HTTP | 双轨及真实回退已验证；提交 `230ccc4` |
 | 阶段 6：MQ Inbox / mTLS 增强（已完成） | 支持新版 AIP 群组通信 | 引入 mq-auth-server、AMQPS、Inbox endpoint、隔离版 v2.1 SDK 和 Mode Router 调用适配 | 保留 RabbitMQ 5672、Direct RPC、HTTP、group bridge/proxy；新链路默认关闭 | 真实 5671 mTLS Inbox E2E 通过；提交 `f08912f` |
 | 阶段 7：全量回归与兼容上线（已完成） | 确认升级不影响既有功能 | 跑 PC 页面、API、数据、发证、编排、积分、事件、MQ 和安全回归 | 所有 v2.1 主链路开关继续默认关闭；发现问题可单项回滚 | 最终代码提交 `f854f4a`；完整门禁和 PC 主流程通过 |
+| 阶段 8：v2.1 正式启用（已完成） | 将已验证的新协议切为默认运行链路 | 持久开启 Registry、CA、前端、Discovery、MQ Inbox 和 mq-auth 开关并重启 | legacy、dual-read 和 fallback 继续开启；不删除旧接口和历史数据 | 启用提交 `aee049c`；启用后自动化门禁和 PC 双协议预览通过 |
 
 ### 三、推荐实施顺序
 
@@ -40,8 +58,10 @@
 7. 适配前端申请页和 wyl/server.py 网关分流
 8. 接入 Discovery v2.1，但保留 yhl/Registry discovery fallback
 9. 最后接入 MQ Inbox/mTLS，保留 Direct RPC/HTTP fallback
-10. 全量回归通过后保持生产开关默认关闭，再按测试 Agent -> 新 Agent -> 小流量 Agent 的顺序灰度启用
+10. 全量回归通过后正式开启 v2.1 主链路，保留 legacy 和 fallback，并在启用态再次完成自动化与 PC 验收
 ```
+
+下文各阶段中的“当前生产为 false”是当时阶段性交付的历史快照，已被上述阶段 8 最终运行状态替代。
 
 ### 阶段 1 完成状态与阶段 2 入口
 
