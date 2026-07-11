@@ -25,8 +25,8 @@
 | 阶段 3：CA 发证链路升级（已完成） | 从 HTTP-01 Challenge 切到 EAB | 引入 `eab_verifier.py`、Registry EAB client，修改 ACME `new-account/new-order/finalize` 和 v2.1 证书 CN/SAN | Challenge Server 保留 legacy，旧 account/证书继续可用，默认开关关闭 | EAB 隔离端到端发证通过；提交 `fed618e`；CA `131 passed` |
 | 阶段 4：前端与网关兼容适配（已完成） | 前端支持新版字段但不破坏旧页面 | Agent 申请页支持 ACS 02.01、certificate、AMQP endpoint；网关新增 EAB/CA 分流和外部 URL 重写 | 新前端/EAB 默认关闭；旧 02.00、`/api`、Registry 路径不变 | 双轨前端与网关已完成；提交 `c467b00` |
 | 阶段 5：Discovery 适配（已完成） | 引入新版 Discovery 查询能力 | 适配 `/acps-adp-v2/discover`、Registry DSP 同步和新响应结构 | 默认关闭 Discovery 主链路；保留 Registry Passport fallback 和 Direct RPC/HTTP | 双轨及真实回退已验证；提交 `230ccc4` |
-| 阶段 6：MQ Inbox / mTLS 增强 | 支持新版 AIP 群组通信 | 引入 mq-auth-server、AMQPS、Inbox endpoint、SDK 调用适配 | Direct RPC / HTTP 调度不删除，失败自动 fallback | 新版 MQ Inbox 可灰度使用 |
-| 阶段 7：全量回归与灰度上线 | 确认升级不影响既有功能 | 跑页面、API、数据、发证、编排、积分、事件回归 | 发现问题关闭对应开关回滚 | 可上线版本与回滚方案 |
+| 阶段 6：MQ Inbox / mTLS 增强（已完成） | 支持新版 AIP 群组通信 | 引入 mq-auth-server、AMQPS、Inbox endpoint、隔离版 v2.1 SDK 和 Mode Router 调用适配 | 保留 RabbitMQ 5672、Direct RPC、HTTP、group bridge/proxy；新链路默认关闭 | 真实 5671 mTLS Inbox E2E 通过；提交 `f08912f` |
+| 阶段 7：全量回归与兼容上线（已完成） | 确认升级不影响既有功能 | 跑 PC 页面、API、数据、发证、编排、积分、事件、MQ 和安全回归 | 所有 v2.1 主链路开关继续默认关闭；发现问题可单项回滚 | 最终代码提交 `f854f4a`；完整门禁和 PC 主流程通过 |
 
 ### 三、推荐实施顺序
 
@@ -40,7 +40,7 @@
 7. 适配前端申请页和 wyl/server.py 网关分流
 8. 接入 Discovery v2.1，但保留 yhl/Registry discovery fallback
 9. 最后接入 MQ Inbox/mTLS，保留 Direct RPC/HTTP fallback
-10. 全量回归通过后，只对新注册 Agent 默认启用 v2.1
+10. 全量回归通过后保持生产开关默认关闭，再按测试 Agent -> 新 Agent -> 小流量 Agent 的顺序灰度启用
 ```
 
 ### 阶段 1 完成状态与阶段 2 入口
@@ -147,6 +147,39 @@ Discovery 8005=off
 
 因此现网仍使用 Registry-first 调度，旧编排、积分、回调和 Direct RPC/HTTP 行为不变。下一步进入阶段 6：旁路部署 mq-auth-server 和 RabbitMQ `5671` mTLS，增加默认关闭的 `mq_inbox` 执行分支，同时保留 RabbitMQ `5672`、group bridge/proxy 和 Direct RPC/HTTP fallback。
 
+### 阶段 6 与阶段 7 完成状态
+
+2026-07-11 已在远端 `upgrade/acps-v2.1-mq-inbox` 分支完成阶段 6 和最终兼容验收。阶段 6 核心提交为 `f08912f467fb9c7c8a258d9efddf7bfe37ddec33`，最终代码提交为 PC 路由恢复修复 `f854f4a858cb2cca00c82bf1b3086435750a7c95`。完整实施记录见 `STAGE6_MQ_INBOX_MTLS_UPGRADE.md`，最终验收见 `FINAL_ACPS_V21_UPGRADE_VALIDATION.md`。
+
+已完成：
+
+- 官方 AIP v2.1 SDK 以 `acps_sdk.aip_v21`、AIC v2.1 以 `acps_sdk.aic_v21` 隔离接入，旧 `acps_sdk.aip` 不覆盖。
+- 部署官方 `sds/mq-auth-server`，RabbitMQ 新增 `5671` TLS 1.3、vhost `acps`、EXTERNAL 和 HTTP auth backend；旧 `5672`、vhost `/` 保留。
+- Redis 仅监听 localhost，用于动态 group ACL；mq-auth Group API `9007` 和 Auth API `9008` 使用 mTLS。
+- Mode Router 新增 `mq_inbox` 显式执行分支、ACS AMQP endpoint 保真、失败回退；travel bridge 仅在开关开启时启动 v2.1 Inbox consumer。
+- 真实 `5671` mTLS E2E 完成 Inbox 邀请、任务下发、结果返回和 ACL 清理；旧 `5672` group invite 继续通过。
+- 修复阶段 4 bridge 离开 `/agent-apply` 后未删除宿主属性导致 PC 其他路由被隐藏的问题，并增加回归断言和缓存版本更新。
+- PC 端首页、菜单、广场搜索/分类、注册、登录、账户、积分、工作台、Agent 管理、Agent 详情、ACS 02.00 预览、权限拦截和退出均通过；测试账户已删除。
+- 实际 Agent 业务调用因当前 Registry 中选中的 `10.126.126.1` Agent 端点不可用，按当前环境约束跳过，不改写 Registry endpoint，也不引入掩盖真实状态的假主链路。
+
+最终生产运行态继续保持兼容优先：
+
+```text
+ACPS_V21_ENABLED=false
+ACPS_EAB_ISSUANCE_ENABLED=false
+ACPS_CA_EAB_ENABLED=false
+ACPS_CHALLENGE_LEGACY_ENABLED=true
+ACPS_FRONTEND_V21_ENABLED=false
+ACPS_FRONTEND_EAB_ENABLED=false
+ACPS_DISCOVERY_V21_ENABLED=false
+ACPS_DISCOVERY_LEGACY_FALLBACK_ENABLED=true
+ACPS_MQ_AUTH_ENABLED=false
+ACPS_MQ_INBOX_ENABLED=false
+ACPS_MQ_LEGACY_FALLBACK_ENABLED=true
+```
+
+这表示升级代码和基础设施已完整落地，但不会在未完成真实 Agent 证书和 endpoint 灰度前强制切换生产主链路。
+
 ### 远端已联通后的实际基线与整理结果
 
 结论：**后续升级以远端 `/home/johnteller/team_ws` 实际代码为主线；提交包解压代码只作为历史提交参考和差异对照。**
@@ -216,7 +249,7 @@ Discovery/Partners：/home/johnteller/team_ws/yhl
 
 阶段 0 已新增只读 HTTP 冒烟脚本和隔离测试数据库的一键回归脚本，并完成 Registry、CA、Challenge、Mode Router 的测试基线记录。完整结果、数据行数、已知测试失败和升级前数据快照位置见 `STAGE0_BASELINE.md`。
 
-### 四、首个可交付版本范围
+### 四、首个可交付版本范围（历史目标）
 
 首个版本建议只做“协议主链路兼容升级”，不要一次性切换所有新版能力：
 
@@ -228,12 +261,12 @@ Discovery/Partners：/home/johnteller/team_ws/yhl
 6. 网关保持旧 `/api`，新增必要 EAB/CA 分流。
 7. 旧 Agent、旧积分、旧事件、旧 Passport、旧编排流程全部通过回归。
 
-暂缓到后续版本：
+原计划暂缓项在最终版本中的处理：
 
-- 完整 mTLS entity 平面。
-- MQ Inbox 全量切换。
-- Discovery 完全替代 Registry discovery。
-- Python 3.14 / hatchling 全量运行时重构。
+- MQ Inbox/mTLS 和 Discovery 兼容代码已完成，但生产不做全量强制切换。
+- Registry discovery、Direct RPC、HTTP 和旧 MQ 继续作为长期 fallback。
+- 完整 entity mTLS 平面不是当前 RenTA 页面和编排的活动入口，未强制替换现有调用面。
+- Python 3.14 / hatchling 全量运行时重构不属于协议兼容必要条件，当前继续使用远端 Python 3.12 运行环境。
 
 ### 五、关键开关与回滚策略
 
@@ -254,8 +287,8 @@ Discovery/Partners：/home/johnteller/team_ws/yhl
 - 原有平台入口、页面、菜单、登录和管理流程不变。
 - 旧 `/api` 接口继续可用。
 - 历史 Agent、旧 AIC、旧证书、积分、事件、Passport、Supervisor 记录可查。
-- 新注册 Agent 默认使用 AIC v02.01 和 ACS v02.01。
-- 新证书通过 EAB 发证，不再依赖 Challenge Server 主链路。
+- v2.1 灰度开关开启时，新注册 Agent 可以使用 AIC v02.01 和 ACS v02.01；开关关闭时旧写入不变。
+- CA/EAB 灰度开关开启时，新证书通过 EAB 发证；旧 account 继续保留 Challenge legacy。
 - Mode Router 原有调度、回调、结算流程不受影响。
 - 关闭新协议开关后，平台可以回到旧链路运行。
 
@@ -923,6 +956,8 @@ passports/runtime-review/schedule
 
 ### 7.3 Group Executor：Direct RPC -> Inbox 优先
 
+**实施状态（2026-07-11）：阶段 6 已完成，提交 `f08912f`。** 新旧 SDK 隔离存在，生产默认仍走旧链路。
+
 当前：
 
 - `rabbitmq_port=5672`
@@ -939,7 +974,7 @@ passports/runtime-review/schedule
 - Inbox 队列 `inbox_{AIC}`
 - `mq-auth-server` 管理 ACL
 
-**需要修改**
+**已实现修改**
 
 | 文件 | 修改内容 |
 |---|---|
@@ -983,6 +1018,8 @@ else:
 
 ## 9. MQ / mq-auth-server 改造清单
 
+**实施状态（2026-07-11）：阶段 6 已完成。** RabbitMQ `5671/acps`、mq-auth `9007/9008`、Redis ACL 和真实 Inbox E2E 已部署并验证；`5672` 旧链路保留。
+
 新版 v2.1 要支持 Inbox 群组，需要新增：
 
 | 组件 | 修改动作 |
@@ -1006,6 +1043,8 @@ else:
 ## 10. SDK / CLI 改造清单
 
 ### 10.1 SDK
+
+**实施状态（2026-07-11）：已采用隔离命名空间接入。** 旧 `acps_sdk.aip` 保持原样，新版代码位于 `acps_sdk.aip_v21` 和 `acps_sdk.aic_v21`，避免覆盖旧 Agent 的导入路径。
 
 | 当前 | 新版 | 修改动作 |
 |---|---|---|
