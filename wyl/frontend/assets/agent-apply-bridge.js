@@ -175,7 +175,7 @@
       root.remove();
     }
     var host = getHost();
-    if (host) host.dataset.agentApplyBridge = "";
+    if (host) host.removeAttribute("data-agent-apply-bridge");
   }
 
   function scheduleRender(delay) {

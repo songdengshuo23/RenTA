@@ -109,4 +109,8 @@ assert.ok(invalid.amqpUrl);
 assert.ok(invalid.messageQueueVersion);
 
 assert.equal(/localStorage\.setItem\([^\n]*(eab|macKey|keyId)/i.test(source), false);
+assert.match(
+  source,
+  /function removeBridge\(\)[\s\S]*?removeAttribute\(["']data-agent-apply-bridge["']\)/
+);
 console.log("agent-apply bridge: 02.00 compatibility and 02.01 payload tests passed");
