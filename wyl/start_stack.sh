@@ -42,10 +42,10 @@ start_registry() {
     export REGISTRY_SERVICE_TOKEN="local-dev-token"
     export DSP_SERVICE_TOKEN="local-dsp-token"
     export CA_CHALLENGE_STATUS_PATH_TYPE="parent"
-    export ACPS_V21_ENABLED="false"
+    export ACPS_V21_ENABLED="true"
     export ACPS_LEGACY_API_ENABLED="true"
     export ACPS_AIC_DUAL_READ_ENABLED="true"
-    export ACPS_EAB_ISSUANCE_ENABLED="false"
+    export ACPS_EAB_ISSUANCE_ENABLED="true"
     export PYTHONPATH="$dir:$dir/.py312deps:$dir/.venv/lib/python3.13/site-packages"
     nohup python3 -u main.py > "$log" 2>&1 &
     echo $! > "$dir/logs/server.wyl-restart.pid"
@@ -105,7 +105,7 @@ start_ca() {
     export HTTP01_VALIDATION_MOCK="true"
     export AGENT_REGISTRY_URL="http://127.0.0.1:8001/acps-atr-v2"
     export AGENT_REGISTRY_INTERNAL_URL="http://127.0.0.1:8001"
-    export ACPS_CA_EAB_ENABLED="false"
+    export ACPS_CA_EAB_ENABLED="true"
     export ACPS_CHALLENGE_LEGACY_ENABLED="true"
     export UVICORN_HOST="0.0.0.0"
     export UVICORN_PORT="8003"
@@ -152,8 +152,8 @@ start_frontend() {
   fi
   (
     cd "$dir"
-    export ACPS_FRONTEND_V21_ENABLED="${ACPS_FRONTEND_V21_ENABLED:-false}"
-    export ACPS_FRONTEND_EAB_ENABLED="${ACPS_FRONTEND_EAB_ENABLED:-false}"
+    export ACPS_FRONTEND_V21_ENABLED="${ACPS_FRONTEND_V21_ENABLED:-true}"
+    export ACPS_FRONTEND_EAB_ENABLED="${ACPS_FRONTEND_EAB_ENABLED:-true}"
     nohup python3 server.py --host 0.0.0.0 --port 8888 > "$log" 2>&1 &
     echo $! > "$dir/server.pid"
   )
@@ -165,7 +165,7 @@ start_frontend() {
 }
 
 start_discovery() {
-  local enabled="${ACPS_DISCOVERY_V21_ENABLED:-false}"
+  local enabled="${ACPS_DISCOVERY_V21_ENABLED:-true}"
   case "${enabled,,}" in
     1|true|yes|on) ;;
     *)
@@ -205,7 +205,7 @@ start_discovery() {
 }
 
 start_mq_auth() {
-  local enabled="${ACPS_MQ_AUTH_ENABLED:-false}"
+  local enabled="${ACPS_MQ_AUTH_ENABLED:-true}"
   case "${enabled,,}" in
     1|true|yes|on) ;;
     *)
@@ -256,11 +256,11 @@ start_mode_router() {
   set_env_kv RABBITMQ_USER "${RABBITMQ_USER:-guest}"
   set_env_kv RABBITMQ_PASSWORD "${RABBITMQ_PASSWORD:-guest}"
   set_env_kv RABBITMQ_VHOST "${RABBITMQ_VHOST:-/}"
-  set_env_kv ACPS_DISCOVERY_V21_ENABLED "${ACPS_DISCOVERY_V21_ENABLED:-false}"
+  set_env_kv ACPS_DISCOVERY_V21_ENABLED "${ACPS_DISCOVERY_V21_ENABLED:-true}"
   set_env_kv ACPS_DISCOVERY_LEGACY_FALLBACK_ENABLED "${ACPS_DISCOVERY_LEGACY_FALLBACK_ENABLED:-true}"
   set_env_kv ORCHESTRATOR_DISCOVERY_URL "${ORCHESTRATOR_DISCOVERY_URL:-http://127.0.0.1:8005/acps-adp-v2/discover}"
-  set_env_kv ACPS_MQ_AUTH_ENABLED "${ACPS_MQ_AUTH_ENABLED:-false}"
-  set_env_kv ACPS_MQ_INBOX_ENABLED "${ACPS_MQ_INBOX_ENABLED:-false}"
+  set_env_kv ACPS_MQ_AUTH_ENABLED "${ACPS_MQ_AUTH_ENABLED:-true}"
+  set_env_kv ACPS_MQ_INBOX_ENABLED "${ACPS_MQ_INBOX_ENABLED:-true}"
   set_env_kv ACPS_MQ_LEGACY_FALLBACK_ENABLED "${ACPS_MQ_LEGACY_FALLBACK_ENABLED:-true}"
   set_env_kv ACPS_MQ_LEADER_AIC "${ACPS_MQ_LEADER_AIC:-1.2.156.3088.1.1.34C2.478BDF.3GF546.0JU4}"
   set_env_kv ACPS_MQ_HOST "${ACPS_MQ_HOST:-127.0.0.1}"
@@ -304,7 +304,7 @@ start_mode2_group_adapter() {
       printf '\n%s=%s\n' "$key" "$value" >> "$bridge_dir/.env"
     fi
   }
-  set_bridge_env_kv ACPS_MQ_INBOX_ENABLED "${ACPS_MQ_INBOX_ENABLED:-false}"
+  set_bridge_env_kv ACPS_MQ_INBOX_ENABLED "${ACPS_MQ_INBOX_ENABLED:-true}"
   set_bridge_env_kv ACPS_MQ_HOST "${ACPS_MQ_HOST:-127.0.0.1}"
   set_bridge_env_kv ACPS_MQ_PORT "${ACPS_MQ_PORT:-5671}"
   set_bridge_env_kv ACPS_MQ_VHOST "${ACPS_MQ_VHOST:-acps}"

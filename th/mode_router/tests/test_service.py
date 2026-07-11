@@ -340,7 +340,7 @@ class ServiceTests(unittest.TestCase):
             "leader",
         )
 
-    def test_orchestrator_execute_agent_route_defaults_to_square_registry(self):
+    def test_orchestrator_execute_agent_route_uses_square_registry_when_discovery_disabled(self):
         calls = {"registry": 0, "discovery": 0}
 
         class RegistryHandler(BaseHTTPRequestHandler):
@@ -419,6 +419,7 @@ class ServiceTests(unittest.TestCase):
                     "task": "search current industry news and summarize it",
                     "registry_url": registry_url,
                     "discovery_url": discovery_url,
+                    "prefer_discovery": False,
                     "check_dispatch": False,
                     "dry_run": True,
                     "route_scores": {"LLM": 0.05, "Agent": 0.95, service.ROUTE_MULTI_AGENT: 0.1},
