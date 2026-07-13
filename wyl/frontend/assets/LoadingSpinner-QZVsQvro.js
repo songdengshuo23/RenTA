@@ -1,1 +1,0 @@
-import{_ as a,d as n,e as o,f as e,t as r}from"./index-XaP3KjHi.js";const i={class:"loading-state"},p={__name:"LoadingSpinner",props:{text:{type:String,default:"加载中…"}},setup(s){return(l,t)=>(n(),o("div",i,[t[0]||(t[0]=e("div",{class:"spinner"},null,-1)),e("span",null,r(s.text),1)]))}},d=a(p,[["__scopeId","data-v-0a9ae196"]]);export{d as L};

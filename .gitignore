@@ -29,6 +29,7 @@ id_ed25519*
 **/.vite/
 **/.cache/
 **/dist/.vite/
+wyl/frontend-source/dist/
 
 # Logs, PID, runtime data
 server_logs/
