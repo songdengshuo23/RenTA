@@ -1,0 +1,2 @@
+# Pin to the version verified in the source platform for EXTERNAL/mTLS AMQP.
+aio-pika==9.6.2

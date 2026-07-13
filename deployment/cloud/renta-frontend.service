@@ -1,0 +1,23 @@
+[Unit]
+Description=RenTA web platform frontend and API gateway
+After=network-online.target renta-registry.service renta-ca.service renta-discovery.service renta-mode-router.service renta-direct-rpc.service
+Wants=network-online.target renta-registry.service renta-ca.service renta-discovery.service renta-mode-router.service renta-direct-rpc.service
+
+[Service]
+Type=simple
+User=renta
+Group=renta
+WorkingDirectory=/opt/renta/wyl/server
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=ACPS_FRONTEND_V21_ENABLED=true
+Environment=ACPS_FRONTEND_EAB_ENABLED=true
+Environment=WYL_REGISTRY_UPSTREAM=http://127.0.0.1:8001/
+Environment=WYL_CA_UPSTREAM=http://127.0.0.1:8003/
+Environment=WYL_PROXY_TIMEOUT_SECONDS=0
+ExecStart=/opt/python/3.13/bin/python3.13 -B -u server.py --host 0.0.0.0 --port 8888
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=renta.target

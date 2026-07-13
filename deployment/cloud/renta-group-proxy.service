@@ -1,0 +1,20 @@
+[Unit]
+Description=RenTA travel agent proxy
+After=network-online.target renta-group-bridge.service
+Wants=network-online.target renta-group-bridge.service
+
+[Service]
+Type=simple
+User=renta
+Group=renta
+WorkingDirectory=/opt/renta/th/mode_router
+EnvironmentFile=/opt/renta/runtime/mode-router/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/opt/renta/th/mode_router:/opt/renta/ACPs_update_code/ACPs-SDK
+ExecStart=/opt/renta/venv/mode-router/bin/python -B -u -m uvicorn travel_agent_proxy:app --host 127.0.0.1 --port 8099
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=renta.target

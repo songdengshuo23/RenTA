@@ -1,0 +1,7 @@
+[Unit]
+Description=RenTA platform service group
+Wants=renta-registry.service renta-ca.service renta-challenge.service renta-mq-auth.service renta-discovery.service renta-group-bridge.service renta-group-proxy.service renta-mode-router.service renta-direct-rpc.service renta-frontend.service
+After=network-online.target postgresql.service redis.service rabbitmq-server.service
+
+[Install]
+WantedBy=multi-user.target

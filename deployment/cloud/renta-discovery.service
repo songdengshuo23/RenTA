@@ -1,0 +1,25 @@
+[Unit]
+Description=RenTA ACPs Discovery service
+After=network-online.target postgresql.service renta-registry.service
+Wants=network-online.target renta-registry.service
+
+[Service]
+Type=simple
+User=renta
+Group=renta
+WorkingDirectory=/opt/renta/yhl/ACPs-Discovery-Server
+EnvironmentFile=/opt/renta/runtime/discovery/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/opt/renta/yhl/ACPs-Discovery-Server:/opt/renta/ACPs_update_code/ACPs-SDK
+Environment=DRC_BASE_URL=http://127.0.0.1:8001/acps-dsp-v2
+Environment=DRC_SERVICE_TOKEN=local-dsp-token
+Environment=REGISTRY_ATR_BASE_URL=http://127.0.0.1:8001/acps-atr-v2
+Environment=UVICORN_HOST=127.0.0.1
+Environment=UVICORN_PORT=8005
+ExecStart=/opt/renta/venv/discovery/bin/python -B -u main.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=renta.target

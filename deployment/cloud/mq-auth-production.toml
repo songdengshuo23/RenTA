@@ -1,0 +1,8 @@
+# Production defaults retained from the source platform.
+[cache]
+local_ttl_seconds = 30
+group_acl_key_ttl_seconds = 604800
+
+# Cloud deployment override. RabbitMQ reaches this service over loopback.
+[server]
+host = "127.0.0.1"

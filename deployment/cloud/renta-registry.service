@@ -1,0 +1,32 @@
+[Unit]
+Description=RenTA Registry service
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=renta
+Group=renta
+WorkingDirectory=/opt/renta/sds/registry-server
+EnvironmentFile=/opt/renta/runtime/registry/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/opt/renta/sds/registry-server
+Environment=CA_SERVER_BASE_URL=http://127.0.0.1:8003/acps-atr-v2
+Environment=CA_SERVER_MOCK=false
+Environment=CA_SERVER_SERVICE_TOKEN=local-dev-token
+Environment=REGISTRY_SERVICE_TOKEN=local-dev-token
+Environment=DSP_SERVICE_TOKEN=local-dsp-token
+Environment=CA_CHALLENGE_STATUS_PATH_TYPE=parent
+Environment=ACPS_V21_ENABLED=true
+Environment=ACPS_LEGACY_API_ENABLED=true
+Environment=ACPS_AIC_DUAL_READ_ENABLED=true
+Environment=ACPS_EAB_ISSUANCE_ENABLED=true
+Environment=UVICORN_HOST=127.0.0.1
+Environment=UVICORN_PORT=8001
+ExecStart=/opt/renta/venv/registry/bin/python -B -u main.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=renta.target

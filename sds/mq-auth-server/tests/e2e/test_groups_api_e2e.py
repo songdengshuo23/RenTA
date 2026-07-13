@@ -128,7 +128,7 @@ class TestGroupApiAuthErrors:
             )
             # 若连接未被强制中断，HTTP 层应返回 403
             assert response.status_code == 403
-        except httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError:
+        except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError):
             # SSL 握手阶段被拒绝或 TLSv1.3 握手后连接被重置，均属预期行为
             pass
 

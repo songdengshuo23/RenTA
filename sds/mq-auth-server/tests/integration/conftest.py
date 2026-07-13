@@ -45,7 +45,7 @@ async def redis_available(redis_url: str) -> bool:
         if isinstance(ping_result, Awaitable):
             return bool(await ping_result)
         return bool(ping_result)
-    except RedisConnectionError, RedisTimeoutError, OSError:
+    except (RedisConnectionError, RedisTimeoutError, OSError):
         pytest.skip("Redis not available — 跳过集成测试")
     finally:
         await client.aclose()

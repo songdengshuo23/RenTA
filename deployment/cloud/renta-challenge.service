@@ -1,0 +1,22 @@
+[Unit]
+Description=RenTA legacy HTTP-01 challenge service
+After=network-online.target renta-registry.service
+Wants=network-online.target renta-registry.service
+
+[Service]
+Type=simple
+User=renta
+Group=renta
+WorkingDirectory=/opt/renta/sds/challenge-server
+EnvironmentFile=/opt/renta/runtime/challenge/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/opt/renta/sds/challenge-server/src
+Environment=UVICORN_HOST=127.0.0.1
+Environment=UVICORN_PORT=8004
+ExecStart=/opt/renta/venv/challenge/bin/python -B -u main.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=renta.target

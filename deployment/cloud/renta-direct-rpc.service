@@ -1,0 +1,23 @@
+[Unit]
+Description=RenTA direct RPC service
+After=network-online.target renta-registry.service
+Wants=network-online.target renta-registry.service
+
+[Service]
+Type=simple
+User=renta
+Group=renta
+WorkingDirectory=/opt/renta/yhl
+EnvironmentFile=/opt/renta/runtime/direct/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/opt/renta/yhl:/opt/renta/ACPs_update_code/ACPs-SDK
+Environment=DIRECT_RPC_PORT=19090
+Environment=EVENT_CENTER_URL=http://127.0.0.1:8001/api/events/publish
+Environment=EVENT_CENTER_TOKEN=local-dev-token
+ExecStart=/opt/renta/venv/discovery/bin/python -B -u -m uvicorn direct_rpc_server:app --host 127.0.0.1 --port 19090
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=renta.target

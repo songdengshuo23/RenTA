@@ -1,0 +1,21 @@
+[Unit]
+Description=RenTA MQ authentication and group ACL service
+After=network-online.target redis.service
+Wants=network-online.target redis.service
+
+[Service]
+Type=simple
+User=renta
+Group=renta
+WorkingDirectory=/opt/renta/sds/mq-auth-server
+EnvironmentFile=/opt/renta/runtime/mq-auth/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/opt/renta/sds/mq-auth-server
+Environment=APP_ENV=production
+ExecStart=/opt/renta/venv/mq-auth/bin/python -B -u -m app.main
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=renta.target

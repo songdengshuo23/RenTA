@@ -1,0 +1,32 @@
+[Unit]
+Description=RenTA Certificate Authority service
+After=network-online.target renta-registry.service
+Wants=network-online.target renta-registry.service
+
+[Service]
+Type=simple
+User=renta
+Group=renta
+WorkingDirectory=/opt/renta/sds/ca-server
+EnvironmentFile=/opt/renta/runtime/ca/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/opt/renta/sds/ca-server
+Environment=DATABASE_URL=sqlite:///./agent_ca.db
+Environment=CA_INTERNAL_SERVICE_TOKEN=local-dev-token
+Environment=CA_ADMIN_TOKEN=local-admin-token
+Environment=AGENT_REGISTRY_SERVICE_TOKEN=local-dev-token
+Environment=AGENT_REGISTRY_MOCK=true
+Environment=HTTP01_VALIDATION_MOCK=true
+Environment=AGENT_REGISTRY_URL=http://127.0.0.1:8001/acps-atr-v2
+Environment=AGENT_REGISTRY_INTERNAL_URL=http://127.0.0.1:8001
+Environment=ACPS_CA_EAB_ENABLED=true
+Environment=ACPS_CHALLENGE_LEGACY_ENABLED=true
+Environment=UVICORN_HOST=127.0.0.1
+Environment=UVICORN_PORT=8003
+ExecStart=/opt/renta/venv/ca/bin/python -B -u main.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=renta.target
