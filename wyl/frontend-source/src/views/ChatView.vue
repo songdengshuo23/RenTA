@@ -1322,7 +1322,7 @@ const scrollDown = () => { nextTick(() => { scrollAnchor.value?.scrollIntoView({
 const autoResize = () => { const el = textareaRef.value; if (!el) return; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 160) + 'px' }
 const sendSuggestion = (text) => send(text)
 
-const PLATFORM_BASE_URL = 'http://10.126.126.8:8888'
+const PLATFORM_BASE_URL = window.location.origin
 
 const _routeModeRouterExecute = async (query) => {
   const payload = {

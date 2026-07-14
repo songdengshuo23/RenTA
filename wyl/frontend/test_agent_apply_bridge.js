@@ -5,11 +5,13 @@ const vm = require("node:vm");
 
 const sourcePath = path.join(__dirname, "assets", "agent-apply-bridge.js");
 const source = fs.readFileSync(sourcePath, "utf8");
+const platformOrigin = "https://platform.example";
 const storage = new Map([
   ["user", JSON.stringify({ username: "stage4", email: "stage4@example.com" })]
 ]);
 const window = {
   __RENTA_STAGE4_TEST__: true,
+  location: { origin: platformOrigin },
   localStorage: {
     getItem(key) { return storage.has(key) ? storage.get(key) : null; },
     setItem(key, value) { storage.set(key, String(value)); }
@@ -40,7 +42,7 @@ function values(overrides = {}) {
     endpointUrl: "https://agent.example.com/rpc",
     transport: "JSONRPC",
     schemeName: "mtls",
-    challengeUrl: "http://10.126.126.8:8888/acps-atr-v2",
+    challengeUrl: `${platformOrigin}/acps-atr-v2`,
     amqpUrl: "",
     messageQueueVersion: "rabbitmq:>=4.2",
     certificateDns: "",
@@ -67,7 +69,7 @@ const legacy = bridge.buildPayload(values()).acs;
 assert.equal(legacy.protocolVersion, "02.00");
 assert.match(legacy.aic, /^1\.2\.156\.3088\./);
 assert.equal(legacy.endPoints[0].transport, "JSONRPC");
-assert.equal(legacy.securitySchemes.mtls["x-caChallengeBaseUrl"], "http://10.126.126.8:8888/acps-atr-v2");
+assert.equal(legacy.securitySchemes.mtls["x-caChallengeBaseUrl"], `${platformOrigin}/acps-atr-v2`);
 assert.equal(Object.prototype.hasOwnProperty.call(legacy, "certificate"), false);
 
 const v21Values = values({

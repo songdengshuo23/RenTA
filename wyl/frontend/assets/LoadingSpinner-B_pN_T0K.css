@@ -1,0 +1,1 @@
+.loading-state[data-v-377436cf]{display:flex;align-items:center;justify-content:center;gap:12px;padding:48px;color:var(--ink-3);font-size:13px}.spinner[data-v-377436cf]{width:18px;height:18px;border:2px solid var(--border-card);border-top-color:var(--ink);border-radius:50%;animation:spin-377436cf .9s linear infinite}@keyframes spin-377436cf{to{transform:rotate(360deg)}}

@@ -5,7 +5,10 @@
   var ROOT_ID = "agent-apply-bridge";
   var VERSION = "20260710-acps-v21-stage4";
   var DEFAULT_SCHEME_NAME = "mtls";
-  var DEFAULT_CHALLENGE_URL = "http://10.126.126.8:8888/acps-atr-v2";
+  var PLATFORM_ORIGIN = window.location && window.location.origin
+    ? window.location.origin
+    : "http://127.0.0.1:8888";
+  var DEFAULT_CHALLENGE_URL = PLATFORM_ORIGIN + "/acps-atr-v2";
   var DEFAULT_CA_DIRECTORY_URL = "/acps-atr-v2/acme/directory";
   var EAB_DISPLAY_TTL_MS = 5 * 60 * 1000;
   var renderTimer = null;

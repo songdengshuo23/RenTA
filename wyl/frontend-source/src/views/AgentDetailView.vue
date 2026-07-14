@@ -395,13 +395,13 @@ const sendMessage = async () => {
   chatInput.value = ''; scrollToBottom(); isTyping.value = true
 
   try {
-    // 直接调用服务器平台入口，由 10.126.126.8:8888 反代到 Mode Router。
+    // 通过当前平台入口调用，避免把部署地址固化在浏览器代码中。
     const res = await fetch('/mode-router/pipeline/discovery', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         task: text,
-        discovery_url: 'http://10.126.126.8:8888/acps-adp-v2/discover',
+        discovery_url: `${window.location.origin}/acps-adp-v2/discover`,
         limit: 5,
         hints: {
           estimated_skill_count: 4,

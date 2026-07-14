@@ -883,7 +883,7 @@ const submitApply = async () => {
         mtls: {
           type: 'mutualTLS',
           description: '智能体间mTLS双向认证',
-          'x-caChallengeBaseUrl': 'http://10.126.126.8:8888/acps-atr-v2'
+          'x-caChallengeBaseUrl': `${window.location.origin}/acps-atr-v2`
         }
       },
       provider: {
@@ -901,9 +901,7 @@ const submitApply = async () => {
         outputModes: ['text/plain'],
         description: form.value.description || '默认技能'
       }],
-      endPoints: form.value.url
-        ? [{ url: form.value.url, transport: 'HTTP', security: [{ mtls: [] }] }]
-        : [{ url: 'http://10.126.126.8:9000/rpc', transport: 'HTTP', security: [{ mtls: [] }] }]
+      endPoints: [{ url: form.value.url, transport: 'HTTP', security: [{ mtls: [] }] }]
     }
 
     // ====== 步骤 3:统一 JSON 创建(SDS Server AgentCreate schema) ======
