@@ -1,7 +1,9 @@
 # RenTA 云端后续开发对接文档
 
 更新时间：2026-07-15  
-当前生产基线：`8b0997a880b15ed789b36728ca8c79879e704708`
+当前生产运行代码基线：`8b0997a880b15ed789b36728ca8c79879e704708`
+
+GitHub 开发基线：最新 `main`（在上述运行代码基线上仅追加了本对接文档）
 
 ## 0. 新会话可直接使用的任务说明
 
@@ -15,7 +17,8 @@ ACPS_V21_PLATFORM_UPGRADE_MODULES.md 和
 docs/CLOUD_MIGRATION_ACCEPTANCE_20260713.md，再开始操作。
 
 当前正式生产地址是 http://120.27.205.185/，生产部署目录是
-/opt/renta。GitHub main 的生产基线是 8b0997a。云端部署目录没有
+/opt/renta。云端实际运行代码基线是 8b0997a；开发时从 GitHub 最新
+main 开始。云端部署目录没有
 .git，禁止直接把云端当源码仓库，也不能重新依赖 10.126.126.8。
 
 开始修改前先完成：
@@ -71,19 +74,26 @@ SSH: root@120.27.205.185:22
 
 ```text
 仓库: https://github.com/songdengshuo23/RenTA
-main: 8b0997a880b15ed789b36728ca8c79879e704708
+生产运行代码基线: 8b0997a880b15ed789b36728ca8c79879e704708
+main: 获取 origin/main 最新提交；当前只比生产运行代码多本对接文档
 upgrade/acps-v2.1-mq-inbox: 8b0997a880b15ed789b36728ca8c79879e704708
 fix/mobile-responsive-home: 8b0997a880b15ed789b36728ca8c79879e704708
 ```
 
-后续功能应从最新 `main` 创建独立分支。不要继续把新功能堆叠到历史阶段分支。
+可用下面的命令获取不可歧义的最新开发基线：
+
+```bash
+git ls-remote https://github.com/songdengshuo23/RenTA.git refs/heads/main
+```
+
+后续功能应从最新 `main` 创建独立分支。不要从 `8b0997a` 重新分叉而遗漏本对接文档，也不要继续把新功能堆叠到历史阶段分支。
 
 ### 2.3 当前本机工作区
 
 ```text
 裸仓库: D:/B-EP1/_analysis/RenTA-publish.git
 现有工作树: D:/B-EP1/_analysis/RenTA-mobile-ui
-当前提交: 8b0997a880b15ed789b36728ca8c79879e704708
+生产运行代码父提交: 8b0997a880b15ed789b36728ca8c79879e704708
 ```
 
 现有工作树使用 sparse checkout，只展开了前端、部署和文档等部分。开发后端前先扩展路径：
@@ -109,7 +119,8 @@ git --git-dir=D:/B-EP1/_analysis/RenTA-publish.git worktree add `
 SSH: johnteller@10.126.126.8:2222
 历史仓库: /home/johnteller/team_ws
 当前历史分支: upgrade/acps-v2.1-mq-inbox
-历史仓库基线: 8b0997a880b15ed789b36728ca8c79879e704708
+生产运行代码基线: 8b0997a880b15ed789b36728ca8c79879e704708
+历史仓库 HEAD: 在运行代码基线上追加本对接文档
 ```
 
 旧服务器只作为历史副本和核对来源，不是生产依赖，也不应重新进入任何运行配置、前端 URL、服务发现地址或数据库连接。
