@@ -366,7 +366,7 @@ rg "10\.126\.126\.8" wyl/frontend wyl/frontend-source
 
 ```bash
 cd /opt/renta
-PYTHONDONTWRITEBYTECODE=1 python3 -B scripts/stage0_smoke.py
+PYTHONDONTWRITEBYTECODE=1 /opt/python/3.13/bin/python3.13 -B scripts/stage0_smoke.py
 ```
 
 全量阶段 0 回归脚本应在具备完整测试依赖的开发/验收环境运行：
@@ -448,7 +448,7 @@ systemctl reload nginx
 ```bash
 systemctl is-active renta.target nginx postgresql redis rabbitmq-server
 systemctl --no-pager --state=failed
-python3 -B /opt/renta/scripts/stage0_smoke.py
+/opt/python/3.13/bin/python3.13 -B /opt/renta/scripts/stage0_smoke.py
 curl -fsS http://127.0.0.1/
 curl -fsS http://127.0.0.1:8888/
 ss -lntp
@@ -506,7 +506,7 @@ done
 
 ss -lntp | grep -E ':(80|8888|8001|8003|8004|8005|8098|8099|9007|9008|18080|19090|5432|6379|5671|5672)\b'
 
-python3 -B /opt/renta/scripts/stage0_smoke.py
+/opt/python/3.13/bin/python3.13 -B /opt/renta/scripts/stage0_smoke.py
 ```
 
 日志：
